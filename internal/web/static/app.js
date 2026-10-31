@@ -20,7 +20,7 @@ async function api(method, path, body) {
 
 const loaders = {
   vms: async () => { state.vms = await api("GET", "/v1/vms"); renderVMs(); renderTree(); },
-  snapshots: async () => { state.snapshots = await api("GET", "/v1/snapshots"); renderTree(); },
+  snapshots: async () => { state.snapshots = await api("GET", "/v1/snapshots"); renderVMs(); renderTree(); },
   images: async () => { state.images = await api("GET", "/v1/images"); renderImages(); },
   storage: async () => { state.storage = await api("GET", "/v1/storage"); renderStorage(); },
 };
@@ -92,18 +92,51 @@ function renderImages() {
   if (cur) sel.value = cur;
 }
 
+// renderVMs shows VMs as a lineage tree: each fork is indented under the VM
+// whose snapshot it was forked from. A fork whose parent VM is gone stays at
+// the top level and says so.
 function renderVMs() {
   const body = document.querySelector("#vms tbody");
   document.getElementById("vms-empty").hidden = state.vms.length > 0;
-  body.innerHTML = state.vms.map((vm) => {
+  const snapVM = new Map(state.snapshots.map((s) => [s.id, s.vm_id]));
+  const byID = new Map(state.vms.map((vm) => [vm.id, vm]));
+  const parentOf = (vm) => {
+    const p = vm.origin && snapVM.get(vm.origin);
+    return p && byID.has(p) && p !== vm.id ? p : "";
+  };
+  const kids = new Map();
+  for (const vm of state.vms) {
+    const p = parentOf(vm);
+    if (!kids.has(p)) kids.set(p, []);
+    kids.get(p).push(vm);
+  }
+  const rows = [];
+  const walk = (parent, depth) => {
+    for (const vm of kids.get(parent) || []) {
+      rows.push(row(vm, depth));
+      walk(vm.id, depth + 1);
+    }
+  };
+  walk("", 0);
+  body.innerHTML = rows.join("");
+
+  function lineage(vm) {
+    if (!vm.origin) return `<span class="muted">booted</span>`;
+    const pvm = snapVM.get(vm.origin);
+    if (!pvm) return `<span class="muted">fork @ <span class="id">${esc(vm.origin)}</span> (snapshot deleted)</span>`;
+    const gone = !byID.has(pvm) ? " (deleted)" : "";
+    return `<span class="muted">fork of</span> <span class="id">${esc(pvm)}</span><span class="muted">${gone} @ </span><span class="id muted">${esc(vm.origin)}</span>`;
+  }
+
+  function row(vm, depth) {
     const running = vm.state === "running", paused = vm.state === "paused";
+    const indent = depth ? `<span class="branch" style="padding-left:${(depth - 1) * 18}px">↳ </span>` : "";
     return `<tr data-id="${esc(vm.id)}">
-      <td class="id">${esc(vm.id)}</td>
+      <td class="id">${indent}${esc(vm.id)}</td>
       <td><span class="state ${esc(vm.state)}">${esc(vm.state)}</span></td>
-      <td>${esc(vm.image)}</td>
+      <td class="lineage">${lineage(vm)}</td>
       <td>${vm.vcpus}</td>
       <td>${vm.mem_mib}M</td>
-      <td class="id muted">${esc(vm.origin || "–")}</td>
       <td class="muted">${age(vm.created_at)}</td>
       <td class="actions">
         ${running ? `<button class="ghost" data-act="terminal">Terminal</button>` : ""}
@@ -113,7 +146,7 @@ function renderVMs() {
         <button class="danger" data-act="rm">Delete</button>
       </td>
     </tr>`;
-  }).join("");
+  }
 }
 
 function renderTree() {

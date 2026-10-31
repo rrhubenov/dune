@@ -93,6 +93,8 @@ tr:last-child td { border-bottom: none; }
 td.actions { text-align: right; }
 td.actions button { margin-left: 4px; }
 .id { font-family: var(--mono); font-size: 13px; }
+.branch { color: var(--muted); font-family: var(--mono); }
+.lineage { font-size: 13px; }
 .muted { color: var(--muted); }
 
 .state { font-size: 12px; padding: 1px 7px; border-radius: 9px; border: 1px solid currentColor; }
