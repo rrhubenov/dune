@@ -100,6 +100,8 @@ func (m *Manager) Recover() error {
 	return nil
 }
 
+func (m *Manager) Images() ([]store.Image, error) { return m.cfg.DB.ListImages() }
+
 // ImportImage copies a kernel and rootfs into the store under name.
 func (m *Manager) ImportImage(name, kernel, rootfs string) (store.Image, error) {
 	defer m.lock("image:" + name)()
