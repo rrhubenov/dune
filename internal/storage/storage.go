@@ -7,13 +7,13 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/rrhubenov/dune/internal/run"
 )
 
 type Store struct {
@@ -35,10 +35,10 @@ func (s *Store) Setup() error {
 		if err := os.MkdirAll(filepath.Dir(s.Image), 0o755); err != nil {
 			return err
 		}
-		if err := run("truncate", "-s", s.Size, s.Image); err != nil {
+		if err := run.Cmd("truncate", "-s", s.Size, s.Image); err != nil {
 			return err
 		}
-		if err := run("mkfs.xfs", "-q", "-m", "reflink=1", s.Image); err != nil {
+		if err := run.Cmd("mkfs.xfs", "-q", "-m", "reflink=1", s.Image); err != nil {
 			os.Remove(s.Image)
 			return err
 		}
@@ -52,7 +52,7 @@ func (s *Store) Setup() error {
 	if err := os.MkdirAll(s.Mount, 0o755); err != nil {
 		return err
 	}
-	return run("mount", "-o", "loop", s.Image, s.Mount)
+	return run.Cmd("mount", "-o", "loop", s.Image, s.Mount)
 }
 
 // Mounted reports whether something is mounted at s.Mount.
@@ -76,7 +76,7 @@ func (s *Store) Mounted() (bool, error) {
 
 // Trim releases freed XFS blocks back to the host by punching holes in the image.
 func (s *Store) Trim() error {
-	return run("fstrim", s.Mount)
+	return run.Cmd("fstrim", s.Mount)
 }
 
 func (s *Store) Usage() (Usage, error) {
@@ -130,15 +130,4 @@ func Reflink(src, dst string) error {
 		return fmt.Errorf("reflink %s -> %s: %w", src, dst, err)
 	}
 	return out.Close()
-}
-
-func run(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	var stderr strings.Builder
-	cmd.Stdout = io.Discard
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
-	}
-	return nil
 }
