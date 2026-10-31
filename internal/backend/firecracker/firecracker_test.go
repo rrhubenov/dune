@@ -49,7 +49,7 @@ func TestBootSnapshotFork(t *testing.T) {
 
 	machine := func(id string, slot int) backend.Machine {
 		t.Helper()
-		netns.Delete(id, slot)
+		netns.Delete(id)
 		if err := netns.Create(id, slot, 100000+slot, 100000+slot); err != nil {
 			t.Fatal(err)
 		}
@@ -57,7 +57,7 @@ func TestBootSnapshotFork(t *testing.T) {
 			if err := b.Stop(ctx, id, 0); err != nil {
 				t.Error(err)
 			}
-			if err := netns.Delete(id, slot); err != nil {
+			if err := netns.Delete(id); err != nil {
 				t.Error(err)
 			}
 		})
@@ -101,7 +101,7 @@ func TestBootSnapshotFork(t *testing.T) {
 
 	// Boot the parent.
 	start := time.Now()
-	parent := machine("fctest-p", 16001)
+	parent := machine("fct-p", 16001)
 	if _, err := b.Boot(ctx, parent); err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestBootSnapshotFork(t *testing.T) {
 	chain := []string{filepath.Join(snaps, "base"), filepath.Join(snaps, "d1")}
 
 	// Fork two copies from the diff.
-	forks := []backend.Machine{machine("fctest-a", 16002), machine("fctest-b", 16003)}
+	forks := []backend.Machine{machine("fct-a", 16002), machine("fct-b", 16003)}
 	for _, f := range forks {
 		start = time.Now()
 		if _, err := b.Restore(ctx, f, chain); err != nil {

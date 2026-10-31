@@ -41,7 +41,8 @@ func TestLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	t.Cleanup(func() { db.Close() }) // registered first, so it runs after the VM cleanup below
+	db.MinSlot = 15000
 	st := &storage.Store{Mount: work} // reuse the spike store; no image of our own
 	fc := firecracker.New(firecracker.Config{
 		Firecracker:    filepath.Join(rel, "firecracker-v1.17.0-x86_64"),
@@ -56,7 +57,10 @@ func TestLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		vms, _ := m.List()
+		vms, err := m.List()
+		if err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
 		for _, vm := range vms {
 			if err := m.Delete(ctx, vm.ID); err != nil {
 				t.Error(err)

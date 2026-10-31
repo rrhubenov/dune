@@ -78,3 +78,14 @@ func TestChainAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMinSlot(t *testing.T) {
+	s := open(t)
+	s.MinSlot = 100
+	for want := 100; want <= 101; want++ {
+		vm, err := s.CreateVM(VM{Image: "ubuntu", State: VMRunning, VCPUs: 1, MemMiB: 512})
+		if err != nil || vm.NetSlot != want {
+			t.Fatalf("slot = %d, %v; want %d", vm.NetSlot, err, want)
+		}
+	}
+}

@@ -40,16 +40,16 @@ func TestCreate(t *testing.T) {
 	if err := HostSetup(); err != nil {
 		t.Fatal(err)
 	}
-	Delete(id, slot)
+	Delete(id)
 	if err := Create(id, slot, 65534, 65534); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		if err := Delete(id, slot); err != nil {
+		if err := Delete(id); err != nil {
 			t.Error(err)
 		}
-		if run.Quiet("ip", "link", "show", "dune16000") {
-			t.Error("host veth dune16000 still exists after Delete")
+		if run.Quiet("ip", "link", "show", HostIf(id)) {
+			t.Error("host veth still exists after Delete")
 		}
 	}()
 

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/rrhubenov/dune/internal/model"
 )
 
 var (
@@ -24,47 +26,25 @@ var (
 const MaxNetSlot = 16383
 
 const (
-	VMRunning = "running"
-	VMPaused  = "paused"
-	VMStopped = "stopped"
+	VMRunning = model.VMRunning
+	VMPaused  = model.VMPaused
+	VMStopped = model.VMStopped
 
-	SnapFull = "full"
-	SnapDiff = "diff"
+	SnapFull = model.SnapFull
+	SnapDiff = model.SnapDiff
 )
 
-type Image struct {
-	Name      string    `json:"name"`
-	Kernel    string    `json:"kernel"`
-	Rootfs    string    `json:"rootfs"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-type VM struct {
-	ID        string    `json:"id"`
-	Image     string    `json:"image"`
-	State     string    `json:"state"`
-	VCPUs     int       `json:"vcpus"`
-	MemMiB    int       `json:"mem_mib"`
-	NetSlot   int       `json:"net_slot"`
-	PID       int       `json:"pid,omitempty"`
-	Origin    string    `json:"origin,omitempty"` // snapshot this VM was forked from
-	Head      string    `json:"head,omitempty"`   // latest snapshot of this VM; next diff builds on it
-	CreatedAt time.Time `json:"created_at"`
-}
-
-type Snapshot struct {
-	ID        string    `json:"id"`
-	VMID      string    `json:"vm_id"`
-	Parent    string    `json:"parent,omitempty"` // delta base; empty for full snapshots
-	Kind      string    `json:"kind"`
-	MemMiB    int       `json:"mem_mib"`
-	VCPUs     int       `json:"vcpus"`
-	Image     string    `json:"image"`
-	CreatedAt time.Time `json:"created_at"`
-}
+type (
+	Image    = model.Image
+	VM       = model.VM
+	Snapshot = model.Snapshot
+)
 
 type Store struct {
 	db *sql.DB
+	// MinSlot is the lowest network slot CreateVM hands out (default 1).
+	// Tests raise it so their VMs never share a slot with a real daemon's.
+	MinSlot int
 }
 
 const schema = `
@@ -117,7 +97,7 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("migrate: %w", err)
 		}
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, MinSlot: 1}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -177,13 +157,13 @@ func (s *Store) CreateVM(vm VM) (VM, error) {
 		return vm, err
 	}
 	defer tx.Rollback()
-	// Lowest slot >= 1 not in use.
+	// Lowest slot >= MinSlot not in use.
 	var slot int
-	err = tx.QueryRow(`SELECT COALESCE(MIN(n), 1) FROM (
-		SELECT 1 AS n WHERE NOT EXISTS (SELECT 1 FROM vms WHERE net_slot = 1)
+	err = tx.QueryRow(`SELECT MIN(n) FROM (
+		SELECT ?1 AS n WHERE NOT EXISTS (SELECT 1 FROM vms WHERE net_slot = ?1)
 		UNION ALL
-		SELECT net_slot + 1 FROM vms WHERE net_slot + 1 NOT IN (SELECT net_slot FROM vms)
-	)`).Scan(&slot)
+		SELECT net_slot + 1 FROM vms WHERE net_slot >= ?1 AND net_slot + 1 NOT IN (SELECT net_slot FROM vms)
+	)`, s.MinSlot).Scan(&slot)
 	if err != nil {
 		return vm, err
 	}

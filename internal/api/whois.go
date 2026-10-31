@@ -46,12 +46,12 @@ func (a *WhoisAuth) Wrap(next http.Handler) http.Handler {
 		login, err := a.lookup(r.RemoteAddr)
 		if err != nil {
 			slog.Warn("whois failed", "remote", r.RemoteAddr, "err", err)
-			writeJSON(w, http.StatusForbidden, Error{"cannot identify Tailscale peer"})
+			writeJSON(w, http.StatusForbidden, Error{Error: "cannot identify Tailscale peer"})
 			return
 		}
 		if !slices.Contains(a.Allow, login) {
 			slog.Warn("denied", "remote", r.RemoteAddr, "login", login)
-			writeJSON(w, http.StatusForbidden, Error{"Tailscale user " + login + " is not allowed"})
+			writeJSON(w, http.StatusForbidden, Error{Error: "Tailscale user " + login + " is not allowed"})
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, login)))

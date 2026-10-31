@@ -5,8 +5,10 @@
 //
 //	guest eth0 172.16.0.2 ── tap0 172.16.0.1/30 (fixed MAC) ── NAT ── veth0
 //
-// veth0 pairs with a host interface "duneN", where N is the VM's network slot
-// and owns 10.200.0.0/16 offset N*4 (a /30): host side .1, namespace side .2.
+// veth0 pairs with a host interface "dune-<vm id>". The VM's network slot N
+// owns 10.200.0.0/16 offset N*4 (a /30): host side .1, namespace side .2.
+// Naming the host side after the VM (not the slot) means cleanup of one VM can
+// never remove another VM's interface.
 // The host NATs 10.200.0.0/16 out of its uplink.
 //
 // The fixed tap0 MAC matters: a forked guest keeps its ARP cache, so the
@@ -31,7 +33,7 @@ const (
 	GuestMAC  = "06:00:ac:10:00:02" // guest derives 172.16.0.2 from this
 	HostRange = "10.200.0.0/16"
 
-	hostIfPrefix = "dune" // host veth names: dune1, dune2, ...
+	hostIfPrefix = "dune" // host veth names: dune-<vm id>
 	nsVeth       = "veth0"
 	fwdChain     = "DUNE-FORWARD"
 	natChain     = "DUNE-POSTROUTING"
@@ -43,6 +45,9 @@ func Name(vmID string) string { return "dune-" + vmID }
 
 // Path returns the netns file path, as passed to the jailer's --netns.
 func Path(vmID string) string { return "/run/netns/" + Name(vmID) }
+
+// HostIf returns the VM's host-side veth name.
+func HostIf(vmID string) string { return hostIfPrefix + "-" + vmID }
 
 // slotAddrs returns the host-side and namespace-side veth addresses of slot.
 func slotAddrs(slot int) (host, ns netip.Prefix, err error) {
@@ -109,13 +114,23 @@ func Create(vmID string, slot, uid, gid int) (err error) {
 		return err
 	}
 	ns := Name(vmID)
-	hostIf := hostIfPrefix + strconv.Itoa(slot)
+	hostIf := HostIf(vmID)
+	if len(hostIf) > 15 {
+		return fmt.Errorf("vm id %q too long for interface name %s", vmID, hostIf)
+	}
+	// Refuse to take over leftovers; Delete would remove them on our failure.
+	if run.Quiet("ip", "link", "show", hostIf) {
+		return fmt.Errorf("host interface %s already exists", hostIf)
+	}
+	if _, err := os.Stat(Path(vmID)); err == nil {
+		return fmt.Errorf("netns %s already exists", ns)
+	}
 	if err := run.Cmd("ip", "netns", "add", ns); err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
-			Delete(vmID, slot)
+			Delete(vmID)
 		}
 	}()
 	// Run inside the namespace.
@@ -158,8 +173,8 @@ func Create(vmID string, slot, uid, gid int) (err error) {
 // name, and the kernel tears the namespace (and the veth inside it) down
 // asynchronously, or never while a process still holds it. Deleting one end of
 // a veth pair removes both, synchronously, so the slot is free on return.
-func Delete(vmID string, slot int) error {
-	hostIf := hostIfPrefix + strconv.Itoa(slot)
+func Delete(vmID string) error {
+	hostIf := HostIf(vmID)
 	if run.Quiet("ip", "link", "show", hostIf) {
 		if err := run.Cmd("ip", "link", "delete", hostIf); err != nil {
 			return err

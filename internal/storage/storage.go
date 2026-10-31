@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/rrhubenov/dune/internal/model"
 	"github.com/rrhubenov/dune/internal/run"
 )
 
@@ -22,12 +23,7 @@ type Store struct {
 	Size  string // size passed to truncate when creating, e.g. "500G"
 }
 
-type Usage struct {
-	ImageAllocated int64 `json:"image_allocated"` // bytes the sparse image really uses on the host fs
-	FSUsed         int64 `json:"fs_used"`
-	FSTotal        int64 `json:"fs_total"`
-	Mounted        bool  `json:"mounted"`
-}
+type Usage = model.Usage
 
 // Setup creates the image if missing and mounts it if not mounted. Idempotent.
 func (s *Store) Setup() error {

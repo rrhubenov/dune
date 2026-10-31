@@ -14,37 +14,20 @@ import (
 	"strconv"
 
 	"github.com/rrhubenov/dune/internal/backend"
+	"github.com/rrhubenov/dune/internal/model"
 	"github.com/rrhubenov/dune/internal/storage"
 	"github.com/rrhubenov/dune/internal/store"
 	"github.com/rrhubenov/dune/internal/vm"
 )
 
-// Request and response bodies. The CLI uses these too.
-
-type ImportImageRequest struct {
-	Name   string `json:"name"`
-	Kernel string `json:"kernel"` // path on the daemon's host
-	Rootfs string `json:"rootfs"`
-}
-
-type CreateVMRequest = vm.CreateOpts
-
-type PinRequest struct {
-	Kind backend.SnapshotKind `json:"kind,omitempty"` // "", "full" or "diff"
-}
-
-type ForkRequest struct {
-	Count int `json:"count"`
-}
-
-type ForkResponse struct {
-	VMs   []store.VM `json:"vms"`
-	Error string     `json:"error,omitempty"` // set if only some forks started
-}
-
-type Error struct {
-	Error string `json:"error"`
-}
+type (
+	ImportImageRequest = model.ImportImageRequest
+	CreateVMRequest    = model.CreateVMRequest
+	PinRequest         = model.PinRequest
+	ForkRequest        = model.ForkRequest
+	ForkResponse       = model.ForkResponse
+	Error              = model.Error
+)
 
 // Console is implemented by backends with a serial console.
 // BETA: replaced by a vsock guest agent later.
@@ -109,7 +92,7 @@ func (s *Server) importImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Name == "" || req.Kernel == "" || req.Rootfs == "" {
-		writeJSON(w, http.StatusBadRequest, Error{"name, kernel and rootfs are required"})
+		writeJSON(w, http.StatusBadRequest, Error{Error: "name, kernel and rootfs are required"})
 		return
 	}
 	im, err := s.VMs.ImportImage(req.Name, req.Kernel, req.Rootfs)
@@ -158,11 +141,12 @@ func (s *Server) pinVM(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if req.Kind != "" && req.Kind != backend.Full && req.Kind != backend.Diff {
-		writeJSON(w, http.StatusBadRequest, Error{`kind must be "full" or "diff"`})
+	kind := backend.SnapshotKind(req.Kind)
+	if kind != "" && kind != backend.Full && kind != backend.Diff {
+		writeJSON(w, http.StatusBadRequest, Error{Error: `kind must be "full" or "diff"`})
 		return
 	}
-	sn, err := s.VMs.Pin(ctx(r), r.PathValue("id"), req.Kind)
+	sn, err := s.VMs.Pin(ctx(r), r.PathValue("id"), kind)
 	reply(w, sn, err)
 }
 
@@ -200,14 +184,14 @@ func (s *Server) readConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.Console == nil {
-		writeJSON(w, http.StatusNotImplemented, Error{"backend has no console"})
+		writeJSON(w, http.StatusNotImplemented, Error{Error: "backend has no console"})
 		return
 	}
 	n := int64(16 << 10)
 	if t := r.URL.Query().Get("tail"); t != "" {
 		v, err := strconv.ParseInt(t, 10, 64)
 		if err != nil || v <= 0 {
-			writeJSON(w, http.StatusBadRequest, Error{"tail must be a positive integer"})
+			writeJSON(w, http.StatusBadRequest, Error{Error: "tail must be a positive integer"})
 			return
 		}
 		n = v
@@ -237,7 +221,7 @@ func (s *Server) writeConsole(w http.ResponseWriter, r *http.Request) {
 		in = s.Console.ConsoleInput(id)
 	}
 	if in == nil {
-		writeJSON(w, http.StatusConflict, Error{"console input unavailable (VM not started by this daemon instance)"})
+		writeJSON(w, http.StatusConflict, Error{Error: "console input unavailable (VM not started by this daemon instance)"})
 		return
 	}
 	if _, err := io.Copy(in, io.LimitReader(r.Body, 64<<10)); err != nil {
@@ -250,7 +234,7 @@ func (s *Server) writeConsole(w http.ResponseWriter, r *http.Request) {
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v)
 	if err != nil && !errors.Is(err, io.EOF) { // empty body = all defaults
-		writeJSON(w, http.StatusBadRequest, Error{"bad JSON: " + err.Error()})
+		writeJSON(w, http.StatusBadRequest, Error{Error: "bad JSON: " + err.Error()})
 		return false
 	}
 	return true
@@ -274,7 +258,7 @@ func fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrNoNetSlots):
 		status = http.StatusServiceUnavailable
 	}
-	writeJSON(w, status, Error{err.Error()})
+	writeJSON(w, status, Error{Error: err.Error()})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -305,6 +289,10 @@ func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
+		// Successful reads are polled (e.g. console by dune exec); skip them.
+		if r.Method == http.MethodGet && sw.status < 400 {
+			return
+		}
 		slog.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "user", UserFrom(r.Context()))
 	})
 }

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/rrhubenov/dune/internal/backend"
+	"github.com/rrhubenov/dune/internal/model"
 	"github.com/rrhubenov/dune/internal/netns"
 	"github.com/rrhubenov/dune/internal/run"
 	"github.com/rrhubenov/dune/internal/storage"
@@ -47,11 +48,7 @@ type Manager struct {
 	trimTimer *time.Timer
 }
 
-type CreateOpts struct {
-	Image  string `json:"image"`
-	VCPUs  int    `json:"vcpus"`
-	MemMiB int    `json:"mem_mib"`
-}
+type CreateOpts = model.CreateVMRequest
 
 func New(cfg Config) *Manager {
 	return &Manager{cfg: cfg, locks: map[string]*sync.Mutex{}}
@@ -170,7 +167,7 @@ func (m *Manager) start(ctx context.Context, vm store.VM, launch func() (int, er
 	}
 	if err != nil {
 		m.cfg.Backend.Stop(context.Background(), vm.ID, pid)
-		netns.Delete(vm.ID, vm.NetSlot)
+		netns.Delete(vm.ID)
 		m.cfg.DB.DeleteVM(vm.ID)
 		return 0, fmt.Errorf("start vm %s: %w", vm.ID, err)
 	}
@@ -291,7 +288,7 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 	if err := m.cfg.Backend.Stop(ctx, vm.ID, vm.PID); err != nil {
 		return err
 	}
-	if err := netns.Delete(vm.ID, vm.NetSlot); err != nil {
+	if err := netns.Delete(vm.ID); err != nil {
 		return err
 	}
 	if err := m.cfg.DB.DeleteVM(vm.ID); err != nil {
