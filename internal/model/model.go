@@ -52,6 +52,21 @@ type Usage struct {
 	Mounted        bool  `json:"mounted"`
 }
 
+// HostStats is the VM host's memory and disk usage.
+type HostStats struct {
+	MemTotal     int64 `json:"mem_total"`
+	MemAvailable int64 `json:"mem_available"`
+	// MemVMs is the sum of VMMem. Memory shared copy-on-write between forks
+	// is charged to one VM only, so it is counted once.
+	MemVMs int64            `json:"mem_vms"`
+	VMMem  map[string]int64 `json:"vm_mem"` // per VM id, same measure
+	// Disk is the host filesystem holding dune's data dir (and store image).
+	DiskPath  string `json:"disk_path"`
+	DiskTotal int64  `json:"disk_total"`
+	DiskFree  int64  `json:"disk_free"`
+	Store     Usage  `json:"store"`
+}
+
 type ImportImageRequest struct {
 	Name   string `json:"name"`
 	Kernel string `json:"kernel"` // path on the daemon's host

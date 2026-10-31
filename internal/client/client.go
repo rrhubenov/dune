@@ -102,6 +102,11 @@ func (c *Client) Storage() (model.Usage, error) {
 	return u, c.do("GET", "/v1/storage", nil, &u)
 }
 
+func (c *Client) Host() (model.HostStats, error) {
+	var h model.HostStats
+	return h, c.do("GET", "/v1/host", nil, &h)
+}
+
 func (c *Client) Trim() (model.Usage, error) {
 	var u model.Usage
 	return u, c.do("POST", "/v1/storage/trim", nil, &u)

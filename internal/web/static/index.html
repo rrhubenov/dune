@@ -12,7 +12,7 @@
   <h1>dune</h1>
   <span id="conn" class="conn" title="live updates">●</span>
   <div class="spacer"></div>
-  <div id="storage" class="storage"></div>
+  <div id="host" class="host"></div>
   <button id="trim" class="ghost" title="fstrim the store: return freed blocks to the host">Trim</button>
 </header>
 
@@ -28,7 +28,7 @@
       </form>
     </div>
     <table id="vms">
-      <thead><tr><th>ID</th><th>State</th><th>Lineage</th><th>CPU</th><th>Mem</th><th>Age</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>State</th><th>Lineage</th><th>CPU</th><th title="used (cgroup) / configured">Mem</th><th>Age</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
     <p id="vms-empty" class="empty" hidden>No VMs. Pick an image and press Run.</p>

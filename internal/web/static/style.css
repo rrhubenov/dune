@@ -47,7 +47,17 @@ h2 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: 0.08
 .spacer { flex: 1; }
 .conn { color: var(--bad); font-size: 10px; }
 .conn.live { color: var(--ok); }
-.storage { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.host { display: flex; gap: 18px; }
+.meter { display: flex; flex-direction: column; gap: 3px; min-width: 210px; }
+.meter-label { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); }
+.meter-label b { color: var(--text); font-weight: 500; font-family: var(--mono); }
+.meter-bar { position: relative; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter-bar span { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 3px; }
+.meter-bar .used { background: var(--muted); }
+.meter-bar .vms { background: var(--accent); }
+.meter-bar.high .used { background: var(--warn); }
+.meter-bar.full .used { background: var(--bad); }
+@media (max-width: 900px) { .host { display: none; } }
 
 main {
   display: grid; gap: 16px;

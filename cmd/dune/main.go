@@ -43,6 +43,7 @@ Images and storage:
   image ls
   image import NAME --kernel PATH --rootfs PATH   (paths on the daemon host)
   storage [trim]
+  host                                        host memory and disk, per-VM memory
 
 Environment:
   DUNE_HOST   unix:///run/dune/duned.sock (default if present) or http://midas:7070
@@ -123,6 +124,8 @@ func dispatch(c *client.Client, cmd string, args []string) error {
 		return fmt.Errorf("unknown: image %s", sub)
 	case "storage":
 		return cmdStorage(c, args)
+	case "host":
+		return cmdHost(c)
 	}
 	return fmt.Errorf("unknown command %q (dune help)", cmd)
 }
@@ -404,6 +407,31 @@ func cmdStorage(c *client.Client, args []string) error {
 	fmt.Printf("mounted:    %v\nfs used:    %s of %s\non host:    %s (sparse image)\n",
 		u.Mounted, human(u.FSUsed), human(u.FSTotal), human(u.ImageAllocated))
 	return nil
+}
+
+func cmdHost(c *client.Client) error {
+	h, err := c.Host()
+	if err != nil {
+		return err
+	}
+	memUsed := h.MemTotal - h.MemAvailable
+	fmt.Printf("memory:  %s used of %s  (VMs %s)\n", human(memUsed), human(h.MemTotal), human(h.MemVMs))
+	fmt.Printf("disk:    %s used of %s on %s  (store image %s)\n",
+		human(h.DiskTotal-h.DiskFree), human(h.DiskTotal), h.DiskPath, human(h.Store.ImageAllocated))
+	if len(h.VMMem) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(h.VMMem))
+	for id := range h.VMMem {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return h.VMMem[ids[i]] > h.VMMem[ids[j]] })
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "\nVM\tMEMORY")
+	for _, id := range ids {
+		fmt.Fprintf(w, "%s\t%s\n", id, human(h.VMMem[id]))
+	}
+	return w.Flush()
 }
 
 func dash(s string) string {

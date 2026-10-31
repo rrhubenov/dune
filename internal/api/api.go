@@ -43,6 +43,8 @@ type Console interface {
 type Server struct {
 	VMs     *vm.Manager
 	Storage *storage.Store
+	// Host, if set, reports host memory/disk; ids are the current VMs.
+	Host func(ids []string) (model.HostStats, error)
 	Console Console      // optional
 	Events  *events.Hub  // optional; enables /v1/events
 	UI      http.Handler // optional; served at /
@@ -51,6 +53,7 @@ type Server struct {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/storage", s.getStorage)
+	mux.HandleFunc("GET /v1/host", s.getHost)
 	mux.HandleFunc("POST /v1/storage/trim", s.trimStorage)
 	mux.HandleFunc("GET /v1/images", s.listImages)
 	mux.HandleFunc("POST /v1/images", s.importImage)
@@ -82,6 +85,27 @@ func ctx(r *http.Request) context.Context { return context.WithoutCancel(r.Conte
 func (s *Server) getStorage(w http.ResponseWriter, r *http.Request) {
 	u, err := s.Storage.Usage()
 	reply(w, u, err)
+}
+
+func (s *Server) getHost(w http.ResponseWriter, r *http.Request) {
+	if s.Host == nil {
+		writeJSON(w, http.StatusNotImplemented, Error{Error: "host stats unavailable"})
+		return
+	}
+	vms, err := s.VMs.List()
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	ids := make([]string, len(vms))
+	for i, v := range vms {
+		ids[i] = v.ID
+	}
+	h, err := s.Host(ids)
+	if err == nil {
+		h.Store, err = s.Storage.Usage()
+	}
+	reply(w, h, err)
 }
 
 func (s *Server) trimStorage(w http.ResponseWriter, r *http.Request) {

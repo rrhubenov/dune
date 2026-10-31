@@ -22,6 +22,8 @@ import (
 	"github.com/rrhubenov/dune/internal/api"
 	"github.com/rrhubenov/dune/internal/backend/firecracker"
 	"github.com/rrhubenov/dune/internal/events"
+	"github.com/rrhubenov/dune/internal/hoststats"
+	"github.com/rrhubenov/dune/internal/model"
 	"github.com/rrhubenov/dune/internal/netns"
 	"github.com/rrhubenov/dune/internal/run"
 	"github.com/rrhubenov/dune/internal/storage"
@@ -82,7 +84,14 @@ func serve(configPath string) error {
 	if err := mgr.Recover(); err != nil {
 		return fmt.Errorf("recover: %w", err)
 	}
-	handler := (&api.Server{VMs: mgr, Storage: st, Console: fc, Events: hub, UI: web.Handler()}).Handler()
+	host := func(ids []string) (model.HostStats, error) {
+		cgs := map[string]string{}
+		for _, id := range ids {
+			cgs[id] = fc.Cgroup(id)
+		}
+		return hoststats.Collect(cfg.DataDir, cgs)
+	}
+	handler := (&api.Server{VMs: mgr, Storage: st, Console: fc, Events: hub, UI: web.Handler(), Host: host}).Handler()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

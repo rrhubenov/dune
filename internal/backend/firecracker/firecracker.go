@@ -56,6 +56,17 @@ type Config struct {
 // ScopeUnit is the systemd scope a VM runs in when Config.Scopes is set.
 func ScopeUnit(id string) string { return "dune-vm-" + id + ".scope" }
 
+// Cgroup returns the VM's cgroup path relative to the cgroup root, or "" if
+// VMs don't run in their own scopes.
+func (b *Backend) Cgroup(id string) string {
+	if !b.cfg.Scopes {
+		return ""
+	}
+	return slice + "/" + ScopeUnit(id)
+}
+
+const slice = "dune.slice"
+
 // SystemdAvailable reports whether systemd is PID 1 (sd_booted semantics).
 func SystemdAvailable() bool {
 	_, err := os.Stat("/run/systemd/system")
@@ -470,7 +481,7 @@ func (b *Backend) start(ctx context.Context, m backend.Machine) (int, error) {
 		// the jailer in place: the pid we track stays the VM's pid.
 		args = append([]string{
 			"--scope", "--quiet", "--collect",
-			"--unit=" + ScopeUnit(m.ID), "--slice=dune.slice",
+			"--unit=" + ScopeUnit(m.ID), "--slice=" + slice,
 			"--description=dune VM " + m.ID,
 			"--", b.cfg.Jailer,
 		}, args...)

@@ -1,7 +1,7 @@
 "use strict";
 
 // State fetched from the API; re-fetched per collection on change events.
-const state = { vms: [], snapshots: [], images: [], storage: null };
+const state = { vms: [], snapshots: [], images: [], host: null };
 
 // --- API ---------------------------------------------------------------
 
@@ -22,7 +22,8 @@ const loaders = {
   vms: async () => { state.vms = await api("GET", "/v1/vms"); renderVMs(); renderTree(); },
   snapshots: async () => { state.snapshots = await api("GET", "/v1/snapshots"); renderVMs(); renderTree(); },
   images: async () => { state.images = await api("GET", "/v1/images"); renderImages(); },
-  storage: async () => { state.storage = await api("GET", "/v1/storage"); renderStorage(); },
+  // Host stats change continuously; they are also polled (see Start).
+  storage: async () => { state.host = await api("GET", "/v1/host"); renderHost(); renderVMs(); },
 };
 
 // Coalesce bursts of events (a fork emits several) into one fetch per topic.
@@ -78,11 +79,27 @@ function human(n) {
   return (i ? n.toFixed(1) : n) + " " + u[i];
 }
 
-function renderStorage() {
-  const s = state.storage;
-  if (!s) return;
-  document.getElementById("storage").textContent =
-    `${human(s.image_allocated)} on host · ${human(s.fs_used)} / ${human(s.fs_total)} in store`;
+// meter renders a labeled bar. vms (optional) is a highlighted part of used.
+function meter(label, used, total, detail, vms = 0, title = "") {
+  const pct = (n) => Math.min(100, (100 * n) / Math.max(total, 1)).toFixed(1) + "%";
+  const ratio = used / Math.max(total, 1);
+  const level = ratio > 0.95 ? " full" : ratio > 0.85 ? " high" : "";
+  return `<div class="meter" title="${esc(title)}">
+    <div class="meter-label"><span>${esc(label)} <b>${human(used)}</b> / ${human(total)}</span><span>${detail}</span></div>
+    <div class="meter-bar${level}"><span class="used" style="width:${pct(used)}"></span>${vms ? `<span class="vms" style="width:${pct(vms)}"></span>` : ""}</div>
+  </div>`;
+}
+
+function renderHost() {
+  const h = state.host;
+  if (!h) return;
+  const memUsed = h.mem_total - h.mem_available;
+  const diskUsed = h.disk_total - h.disk_free;
+  document.getElementById("host").innerHTML =
+    meter("Memory", memUsed, h.mem_total, `VMs <b>${human(h.mem_vms)}</b>`, h.mem_vms,
+      "Host memory in use (total minus available). Orange: all dune VMs (cgroup memory minus inactive file cache); pages shared copy-on-write between forks count once.") +
+    meter("Disk", diskUsed, h.disk_total, `store <b>${human(h.store.image_allocated)}</b>`, h.store.image_allocated,
+      `Filesystem holding ${h.disk_path}. Orange: the sparse store image's real size. Inside the store: ${human(h.store.fs_used)} of ${human(h.store.fs_total)} used.`);
 }
 
 function renderImages() {
@@ -128,6 +145,11 @@ function renderVMs() {
     return `<span class="muted">fork of</span> <span class="id">${esc(pvm)}</span><span class="muted">${gone} @ </span><span class="id muted">${esc(vm.origin)}</span>`;
   }
 
+  function memCell(vm) {
+    const used = state.host && state.host.vm_mem && state.host.vm_mem[vm.id];
+    return used ? `${human(used)} <span class="muted">/ ${vm.mem_mib}M</span>` : `<span class="muted">${vm.mem_mib}M</span>`;
+  }
+
   function row(vm, depth) {
     const running = vm.state === "running", paused = vm.state === "paused";
     const indent = depth ? `<span class="branch" style="padding-left:${(depth - 1) * 18}px">↳ </span>` : "";
@@ -136,7 +158,7 @@ function renderVMs() {
       <td><span class="state ${esc(vm.state)}">${esc(vm.state)}</span></td>
       <td class="lineage">${lineage(vm)}</td>
       <td>${vm.vcpus}</td>
-      <td>${vm.mem_mib}M</td>
+      <td>${memCell(vm)}</td>
       <td class="muted">${age(vm.created_at)}</td>
       <td class="actions">
         ${running ? `<button class="ghost" data-act="terminal">Terminal</button>` : ""}
@@ -317,3 +339,4 @@ window.addEventListener("resize", () => fit && fit.fit());
 refresh("vms", "snapshots", "images", "storage");
 connectEvents();
 setInterval(() => { renderVMs(); renderTree(); }, 30000); // keep ages fresh
+setInterval(() => refresh("storage"), 5000); // host memory/disk
