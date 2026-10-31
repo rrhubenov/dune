@@ -8,9 +8,8 @@ Wants=network-online.target
 ExecStart=/usr/local/bin/duned
 Restart=on-failure
 RestartSec=2
-# VMs are children of duned but must outlive it (restarts, upgrades): only
-# stop the daemon itself. duned re-adopts running VMs on start.
-KillMode=process
+# VMs run in their own scopes (dune-vm-<id>.scope in dune.slice), not in
+# this unit's cgroup, so stopping or restarting duned leaves them running.
 LimitNOFILE=1048576
 
 [Install]

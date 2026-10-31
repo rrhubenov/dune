@@ -41,6 +41,7 @@ func TestBootSnapshotFork(t *testing.T) {
 		Jailer:         filepath.Join(rel, "jailer-v1.17.0-x86_64"),
 		SnapshotEditor: filepath.Join(rel, "snapshot-editor-v1.17.0-x86_64"),
 		ChrootBase:     filepath.Join(work, "jail"),
+		Scopes:         SystemdAvailable(),
 	})
 	ctx := context.Background()
 	if err := netns.HostSetup(); err != nil {
@@ -102,8 +103,19 @@ func TestBootSnapshotFork(t *testing.T) {
 	// Boot the parent.
 	start := time.Now()
 	parent := machine("fct-p", 16001)
-	if _, err := b.Boot(ctx, parent); err != nil {
+	pid, err := b.Boot(ctx, parent)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if b.cfg.Scopes {
+		// The tracked pid must be the VM itself, inside its own scope.
+		cg, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+		if !strings.Contains(string(cg), "/dune.slice/"+ScopeUnit(parent.ID)) {
+			t.Errorf("pid %d cgroup = %q, want in %s", pid, cg, ScopeUnit(parent.ID))
+		}
+		if !b.Alive(parent.ID, pid) {
+			t.Errorf("pid %d is not the VM's Firecracker process", pid)
+		}
 	}
 	waitFor(parent.ID, "READY", 60*time.Second, func() { send(parent.ID, `echo REA""DY`) })
 	t.Logf("boot to shell: %s", time.Since(start).Round(time.Millisecond))

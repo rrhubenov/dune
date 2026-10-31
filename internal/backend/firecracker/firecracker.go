@@ -45,6 +45,19 @@ type Config struct {
 	SnapshotEditor string
 	ChrootBase     string // on the store, e.g. /srv/dune/store/jail
 	BootArgs       string // DefaultBootArgs if empty
+	// Scopes runs each VM in its own systemd scope, dune-vm-<id>.scope in
+	// dune.slice, instead of in the daemon's cgroup. VMs then survive daemon
+	// restarts under any KillMode and get per-VM resource accounting.
+	Scopes bool
+}
+
+// ScopeUnit is the systemd scope a VM runs in when Config.Scopes is set.
+func ScopeUnit(id string) string { return "dune-vm-" + id + ".scope" }
+
+// SystemdAvailable reports whether systemd is PID 1 (sd_booted semantics).
+func SystemdAvailable() bool {
+	_, err := os.Stat("/run/systemd/system")
+	return err == nil
 }
 
 // Paths inside the chroot.
@@ -393,7 +406,7 @@ func (b *Backend) start(ctx context.Context, m backend.Machine) (int, error) {
 		return 0, err
 	}
 
-	cmd := exec.Command(b.cfg.Jailer,
+	args := []string{
 		"--id", m.ID,
 		"--exec-file", b.cfg.Firecracker,
 		"--uid", strconv.Itoa(m.UID),
@@ -405,7 +418,20 @@ func (b *Backend) start(ctx context.Context, m backend.Machine) (int, error) {
 		"--log-path", jailLog,
 		"--level", "Info",
 		"--show-level",
-	)
+	}
+	name := b.cfg.Jailer
+	if b.cfg.Scopes {
+		// systemd-run --scope registers the scope for its own pid, then execs
+		// the jailer in place: the pid we track stays the VM's pid.
+		args = append([]string{
+			"--scope", "--quiet", "--collect",
+			"--unit=" + ScopeUnit(m.ID), "--slice=dune.slice",
+			"--description=dune VM " + m.ID,
+			"--", b.cfg.Jailer,
+		}, args...)
+		name = "systemd-run"
+	}
+	cmd := exec.Command(name, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return 0, err

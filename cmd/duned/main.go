@@ -67,6 +67,7 @@ func serve(configPath string) error {
 		Jailer:         cfg.Jailer,
 		SnapshotEditor: cfg.SnapshotEditor,
 		ChrootBase:     st.Path("jail"),
+		Scopes:         firecracker.SystemdAvailable(),
 	})
 	mgr := vm.New(vm.Config{Storage: st, DB: db, Backend: fc, UIDBase: cfg.UIDBase})
 	if err := mgr.Recover(); err != nil {
