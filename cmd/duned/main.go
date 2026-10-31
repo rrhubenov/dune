@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,11 +21,13 @@ import (
 
 	"github.com/rrhubenov/dune/internal/api"
 	"github.com/rrhubenov/dune/internal/backend/firecracker"
+	"github.com/rrhubenov/dune/internal/events"
 	"github.com/rrhubenov/dune/internal/netns"
 	"github.com/rrhubenov/dune/internal/run"
 	"github.com/rrhubenov/dune/internal/storage"
 	"github.com/rrhubenov/dune/internal/store"
 	"github.com/rrhubenov/dune/internal/vm"
+	"github.com/rrhubenov/dune/internal/web"
 )
 
 func main() {
@@ -74,11 +77,12 @@ func serve(configPath string) error {
 		slog.Warn("no guest agent binary; imported images get no agent", "err", err)
 		agentBin = ""
 	}
-	mgr := vm.New(vm.Config{Storage: st, DB: db, Backend: fc, UIDBase: cfg.UIDBase, AgentBinary: agentBin})
+	hub := events.NewHub()
+	mgr := vm.New(vm.Config{Storage: st, DB: db, Backend: fc, UIDBase: cfg.UIDBase, AgentBinary: agentBin, Events: hub})
 	if err := mgr.Recover(); err != nil {
 		return fmt.Errorf("recover: %w", err)
 	}
-	handler := (&api.Server{VMs: mgr, Storage: st, Console: fc}).Handler()
+	handler := (&api.Server{VMs: mgr, Storage: st, Console: fc, Events: hub, UI: web.Handler()}).Handler()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -97,7 +101,7 @@ func serve(configPath string) error {
 			slog.Warn("allow_users is empty: every tailnet request will be rejected")
 		}
 		auth := &api.WhoisAuth{Allow: cfg.AllowUsers}
-		remote := &http.Server{Handler: auth.Wrap(handler)}
+		remote := &http.Server{}
 		servers = append(servers, remote)
 		go func() {
 			addr, err := tailnetAddr(ctx, cfg.Listen)
@@ -105,12 +109,14 @@ func serve(configPath string) error {
 				errc <- err
 				return
 			}
+			hosts := allowedHosts(addr)
+			remote.Handler = auth.Wrap(api.BrowserGuard(hosts, handler))
 			ln, err := net.Listen("tcp", addr)
 			if err != nil {
 				errc <- err
 				return
 			}
-			slog.Info("listening", "tailnet", addr, "allow", cfg.AllowUsers)
+			slog.Info("listening", "tailnet", addr, "allow", cfg.AllowUsers, "hosts", hosts)
 			errc <- remote.Serve(ln)
 		}()
 	}
@@ -146,6 +152,32 @@ func listenUnix(path string) (net.Listener, error) {
 		return nil, err
 	}
 	return ln, nil
+}
+
+// allowedHosts lists the Host header values the tailnet listener accepts:
+// its address plus this machine's Tailscale names (short and MagicDNS).
+func allowedHosts(addr string) []string {
+	host, _, _ := net.SplitHostPort(addr)
+	hosts := []string{host}
+	out, err := run.Output("tailscale", "status", "--json", "--self", "--peers=false")
+	if err != nil {
+		slog.Warn("tailscale status; only the IP is an allowed Host", "err", err)
+		return hosts
+	}
+	var st struct {
+		Self struct {
+			DNSName  string
+			HostName string
+		}
+	}
+	if json.Unmarshal([]byte(out), &st) == nil {
+		for _, h := range []string{st.Self.DNSName, st.Self.HostName} {
+			if h = strings.ToLower(strings.TrimSuffix(h, ".")); h != "" {
+				hosts = append(hosts, h)
+			}
+		}
+	}
+	return hosts
 }
 
 // tailnetAddr resolves "tailscale" to <tailscale IPv4>:7070, waiting for

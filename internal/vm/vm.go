@@ -22,6 +22,7 @@ import (
 
 	"github.com/rrhubenov/dune/internal/agent"
 	"github.com/rrhubenov/dune/internal/backend"
+	"github.com/rrhubenov/dune/internal/events"
 	"github.com/rrhubenov/dune/internal/image"
 	"github.com/rrhubenov/dune/internal/model"
 	"github.com/rrhubenov/dune/internal/netns"
@@ -45,6 +46,8 @@ type Config struct {
 	// AgentBinary is the guest agent installed into imported images
 	// (static linux/amd64). Empty: images get no agent.
 	AgentBinary string
+	// Events, if set, is told about every change.
+	Events *events.Hub
 }
 
 type Manager struct {
@@ -85,6 +88,8 @@ func (m *Manager) machine(vm store.VM) backend.Machine {
 	}
 }
 
+func (m *Manager) notify(topics ...string) { m.cfg.Events.Publish(topics...) }
+
 func hostname(id string) string { return "dune-" + id }
 
 func (m *Manager) agent(id string) *agent.Client {
@@ -108,6 +113,7 @@ func (m *Manager) Recover() error {
 		if err := m.cfg.DB.SetVMState(vm.ID, store.VMStopped, 0); err != nil {
 			return err
 		}
+		m.notify(events.VMs)
 	}
 	return nil
 }
@@ -146,6 +152,7 @@ func (m *Manager) ImportImage(name, kernel, rootfs string) (store.Image, error) 
 			return im, err
 		}
 	}
+	defer m.notify(events.Images, events.Storage)
 	return im, m.cfg.DB.PutImage(im)
 }
 
@@ -164,6 +171,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateOpts) (store.VM, error)
 	if err != nil {
 		return vm, err
 	}
+	defer m.notify(events.VMs)
 	defer m.lock(vm.ID)()
 	mach := m.machine(vm)
 	mach.Kernel, mach.Rootfs = im.Kernel, im.Rootfs
@@ -224,6 +232,7 @@ func (m *Manager) setRunState(ctx context.Context, id, from, to string, op func(
 		return vm, err
 	}
 	vm.State = to
+	defer m.notify(events.VMs)
 	return vm, m.cfg.DB.SetVMState(id, to, vm.PID)
 }
 
@@ -252,6 +261,7 @@ func (m *Manager) Pin(ctx context.Context, id string, kind backend.SnapshotKind)
 	if err != nil {
 		return sn, err
 	}
+	defer m.notify(events.Snapshots, events.VMs, events.Storage)
 	err = m.cfg.Backend.Snapshot(ctx, vm.ID, m.snapDir(sn.ID), kind, vm.State == store.VMRunning)
 	if err != nil {
 		os.RemoveAll(m.snapDir(sn.ID))
@@ -280,6 +290,7 @@ func (m *Manager) Fork(ctx context.Context, snapID string, count int) ([]store.V
 		dirs[i] = m.snapDir(sn.ID)
 	}
 	sn := chain[len(chain)-1]
+	defer m.notify(events.VMs, events.Snapshots)
 	var out []store.VM
 	for range count {
 		vm, err := m.cfg.DB.CreateVM(store.VM{
@@ -358,6 +369,7 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 	if err := m.cfg.DB.DeleteVM(vm.ID); err != nil {
 		return err
 	}
+	m.notify(events.VMs, events.Snapshots)
 	m.trimSoon()
 	return nil
 }
@@ -374,6 +386,7 @@ func (m *Manager) DeleteSnapshot(id string) error {
 	if err := os.RemoveAll(m.snapDir(id)); err != nil {
 		return err
 	}
+	m.notify(events.Snapshots)
 	m.trimSoon()
 	return nil
 }
@@ -393,5 +406,6 @@ func (m *Manager) trimSoon() {
 		if err := m.cfg.Storage.Trim(); err != nil {
 			slog.Error("fstrim", "err", err)
 		}
+		m.notify(events.Storage)
 	})
 }

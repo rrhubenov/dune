@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dune</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="vendor/xterm.css">
+</head>
+<body>
+<header>
+  <h1>dune</h1>
+  <span id="conn" class="conn" title="live updates">●</span>
+  <div class="spacer"></div>
+  <div id="storage" class="storage"></div>
+  <button id="trim" class="ghost" title="fstrim the store: return freed blocks to the host">Trim</button>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="panel-head">
+      <h2>VMs</h2>
+      <form id="new-vm" class="inline">
+        <select name="image" id="images" aria-label="image"></select>
+        <label>CPUs <input name="vcpus" type="number" min="1" max="32" value="1"></label>
+        <label>MiB <input name="mem_mib" type="number" min="128" step="128" value="1024"></label>
+        <button type="submit">Run</button>
+      </form>
+    </div>
+    <table id="vms">
+      <thead><tr><th>ID</th><th>State</th><th>Image</th><th>CPU</th><th>Mem</th><th>Origin</th><th>Age</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="vms-empty" class="empty" hidden>No VMs. Pick an image and press Run.</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Snapshots</h2></div>
+    <div id="tree"></div>
+    <p id="tree-empty" class="empty" hidden>No snapshots. Pin a VM to create one.</p>
+  </section>
+</main>
+
+<section id="term-panel" hidden>
+  <div class="term-head">
+    <span id="term-title"></span>
+    <div class="spacer"></div>
+    <button id="term-close" class="ghost">Close</button>
+  </div>
+  <div id="term"></div>
+</section>
+
+<div id="toasts"></div>
+
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

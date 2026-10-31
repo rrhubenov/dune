@@ -4,16 +4,19 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 
 	"github.com/rrhubenov/dune/internal/backend"
+	"github.com/rrhubenov/dune/internal/events"
 	"github.com/rrhubenov/dune/internal/model"
 	"github.com/rrhubenov/dune/internal/storage"
 	"github.com/rrhubenov/dune/internal/store"
@@ -40,7 +43,9 @@ type Console interface {
 type Server struct {
 	VMs     *vm.Manager
 	Storage *storage.Store
-	Console Console // optional
+	Console Console      // optional
+	Events  *events.Hub  // optional; enables /v1/events
+	UI      http.Handler // optional; served at /
 }
 
 func (s *Server) Handler() http.Handler {
@@ -62,6 +67,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/snapshots", s.listSnapshots)
 	mux.HandleFunc("DELETE /v1/snapshots/{id}", s.deleteSnapshot)
 	mux.HandleFunc("POST /v1/snapshots/{id}/fork", s.forkSnapshot)
+	mux.HandleFunc("GET /v1/events", s.events)
+	if s.UI != nil {
+		mux.Handle("GET /", s.UI)
+	}
 	return logRequests(mux)
 }
 
@@ -79,6 +88,7 @@ func (s *Server) trimStorage(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	s.Events.Publish(events.Storage)
 	u, err := s.Storage.Usage()
 	reply(w, u, err)
 }
@@ -298,6 +308,17 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.status = code
 	w.ResponseWriter.WriteHeader(code)
 }
+
+// Hijack passes through to the underlying writer: WebSocket upgrades need it,
+// and a wrapper without it makes them fail with 501.
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.status = http.StatusSwitchingProtocols
+	return http.NewResponseController(w.ResponseWriter).Hijack()
+}
+
+func (w *statusWriter) Flush() { http.NewResponseController(w.ResponseWriter).Flush() }
+
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

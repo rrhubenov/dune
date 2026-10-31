@@ -70,6 +70,7 @@ func (c *Client) raw(method, path, contentType string, body io.Reader) (*http.Re
 	if body != nil {
 		req.Header.Set("Content-Type", contentType)
 	}
+	req.Header.Set("X-Dune-Request", "cli") // see api.CSRFHeader
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
