@@ -6,6 +6,7 @@
 //	/vmlinux             kernel, hard link (boot only)
 //	/vmstate, /mem       snapshot files, hard links, read-only (restore only)
 //	/run/api.sock        Firecracker API socket
+//	/v.sock              vsock device; host side of guest agent connections
 //
 // Snapshots record the disk path as Firecracker saw it ("/rootfs.ext4"), so
 // every fork restores with the same path but, thanks to its own chroot, a
@@ -23,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,6 +70,8 @@ const (
 	jailMem     = "/mem"
 	jailSock    = "/run/api.sock"
 	jailLog     = "/firecracker.log"
+	jailVsock   = "/v.sock"
+	guestCID    = 3               // any value >= 3; each VM has its own vsock device
 	snapVMState = "/snap.vmstate" // where Firecracker writes a new snapshot
 	snapMem     = "/snap.mem"
 )
@@ -155,9 +159,10 @@ func (b *Backend) Boot(ctx context.Context, m backend.Machine) (pid int, err err
 		body any
 	}{
 		{"/machine-config", machineConfig{VCPUCount: m.VCPUs, MemSizeMiB: m.MemMiB, TrackDirtyPages: true}},
-		{"/boot-source", bootSource{KernelImagePath: jailKernel, BootArgs: b.cfg.BootArgs + " " + netns.KernelIPArg}},
+		{"/boot-source", bootSource{KernelImagePath: jailKernel, BootArgs: b.cfg.BootArgs + " " + netns.KernelIPArg + " systemd.hostname=" + m.Hostname}},
 		{"/drives/rootfs", drive{DriveID: "rootfs", PathOnHost: jailDisk, IsRootDevice: true}},
 		{"/network-interfaces/eth0", networkInterface{IfaceID: "eth0", GuestMAC: netns.GuestMAC, HostDevName: netns.TapName}},
+		{"/vsock", vsock{GuestCID: guestCID, UDSPath: jailVsock}},
 		{"/actions", action{ActionType: "InstanceStart"}},
 	}
 	for _, s := range steps {
@@ -211,6 +216,46 @@ func (b *Backend) Restore(ctx context.Context, m backend.Machine, chain []string
 		return 0, err
 	}
 	return pid, nil
+}
+
+// DialAgent connects to a guest vsock port through Firecracker's vsock unix
+// socket: connect, send "CONNECT <port>\n", expect "OK <host port>\n".
+// Restored VMs use the same in-jail socket path, so this works for forks.
+func (b *Backend) DialAgent(ctx context.Context, id string, port uint32) (net.Conn, error) {
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", b.hostPath(id, jailVsock))
+	if err != nil {
+		return nil, err
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(dl)
+	} else {
+		conn.SetDeadline(time.Now().Add(5 * time.Second))
+	}
+	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", port); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	// Read the reply a byte at a time: anything after the newline is the
+	// guest's data and must stay in the connection.
+	var line []byte
+	one := make([]byte, 1)
+	for len(line) < 64 {
+		if _, err := conn.Read(one); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("vsock handshake: %w", err)
+		}
+		if one[0] == '\n' {
+			break
+		}
+		line = append(line, one[0])
+	}
+	if !bytes.HasPrefix(line, []byte("OK ")) {
+		conn.Close()
+		return nil, fmt.Errorf("vsock handshake: %q", line)
+	}
+	conn.SetDeadline(time.Time{})
+	return conn, nil
 }
 
 // fullMemory returns a full memory file for the last snapshot in chain,

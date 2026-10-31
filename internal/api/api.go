@@ -26,6 +26,7 @@ type (
 	PinRequest         = model.PinRequest
 	ForkRequest        = model.ForkRequest
 	ForkResponse       = model.ForkResponse
+	ExecRequest        = model.ExecRequest
 	Error              = model.Error
 )
 
@@ -55,6 +56,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/vms/{id}/pause", s.pauseVM)
 	mux.HandleFunc("POST /v1/vms/{id}/resume", s.resumeVM)
 	mux.HandleFunc("POST /v1/vms/{id}/snapshots", s.pinVM)
+	mux.HandleFunc("POST /v1/vms/{id}/exec", s.execVM)
 	mux.HandleFunc("GET /v1/vms/{id}/console", s.readConsole)
 	mux.HandleFunc("POST /v1/vms/{id}/console", s.writeConsole)
 	mux.HandleFunc("GET /v1/snapshots", s.listSnapshots)
@@ -148,6 +150,18 @@ func (s *Server) pinVM(w http.ResponseWriter, r *http.Request) {
 	}
 	sn, err := s.VMs.Pin(ctx(r), r.PathValue("id"), kind)
 	reply(w, sn, err)
+}
+
+// execVM runs a command via the guest agent. Unlike other operations it is
+// tied to the client connection: if the client goes away, the command is
+// killed.
+func (s *Server) execVM(w http.ResponseWriter, r *http.Request) {
+	var req ExecRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	res, err := s.VMs.Exec(r.Context(), r.PathValue("id"), req)
+	reply(w, res, err)
 }
 
 func (s *Server) listSnapshots(w http.ResponseWriter, r *http.Request) {

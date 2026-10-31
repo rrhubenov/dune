@@ -90,6 +90,11 @@ type networkInterface struct {
 	HostDevName string `json:"host_dev_name"`
 }
 
+type vsock struct {
+	GuestCID int    `json:"guest_cid"`
+	UDSPath  string `json:"uds_path"`
+}
+
 type action struct {
 	ActionType string `json:"action_type"`
 }

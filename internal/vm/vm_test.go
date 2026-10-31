@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rrhubenov/dune/internal/agent"
 	"github.com/rrhubenov/dune/internal/backend"
 	"github.com/rrhubenov/dune/internal/backend/firecracker"
 	"github.com/rrhubenov/dune/internal/netns"
@@ -50,8 +52,15 @@ func TestLifecycle(t *testing.T) {
 		SnapshotEditor: filepath.Join(rel, "snapshot-editor-v1.17.0-x86_64"),
 		ChrootBase:     st.Path("jail"),
 	})
+	agentBin, err := filepath.Abs(env("DUNE_TEST_AGENT", "bin/dune-agent"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(agentBin); err != nil {
+		t.Fatalf("guest agent (make build): %v", err)
+	}
 	// Slots start at 1; keep test VM uids away from real ones.
-	m := New(Config{Storage: st, DB: db, Backend: fc, UIDBase: 200000})
+	m := New(Config{Storage: st, DB: db, Backend: fc, UIDBase: 200000, AgentBinary: agentBin})
 	ctx := context.Background()
 	if err := netns.HostSetup(); err != nil {
 		t.Fatal(err)
@@ -121,6 +130,28 @@ func TestLifecycle(t *testing.T) {
 	waitFor(parent.ID, "READY", func() { send(parent.ID, `echo REA""DY`) })
 	run(parent.ID, "echo base > /root/stage")
 
+	// exec runs argv via the guest agent and returns trimmed stdout.
+	exec := func(id string, stdin string, argv ...string) (string, int) {
+		t.Helper()
+		res, err := m.Exec(ctx, id, agent.ExecRequest{Argv: argv, Stdin: []byte(stdin)})
+		if err != nil {
+			t.Fatalf("exec %s %v: %v", id, argv, err)
+		}
+		if res.Error != "" {
+			t.Fatalf("exec %s %v: %s", id, argv, res.Error)
+		}
+		return strings.TrimSpace(string(res.Stdout)), res.ExitCode
+	}
+	if h, _ := exec(parent.ID, "", "hostname"); h != "dune-"+parent.ID {
+		t.Errorf("parent hostname = %q", h)
+	}
+	if _, code := exec(parent.ID, "", "sh", "-c", "exit 7"); code != 7 {
+		t.Errorf("exit code = %d, want 7", code)
+	}
+	if out, _ := exec(parent.ID, "piped", "cat"); out != "piped" {
+		t.Errorf("stdin passthrough = %q", out)
+	}
+
 	var base, d1 store.Snapshot
 	timed("pin (auto: full)", func() { base, err = m.Pin(ctx, parent.ID, "") })
 	if err != nil || base.Kind != store.SnapFull {
@@ -137,12 +168,26 @@ func TestLifecycle(t *testing.T) {
 	if err != nil || len(forks) != 3 {
 		t.Fatalf("fork = %d, %v", len(forks), err)
 	}
+	uuids := map[string]bool{}
 	for _, f := range forks {
 		if f.Head != d1.ID || f.Origin != d1.ID {
 			t.Errorf("fork %s head/origin = %s/%s, want %s", f.ID, f.Head, f.Origin, d1.ID)
 		}
 		run(f.ID, `grep -q d1 /root/stage && echo STA""GE-OK`)
 		waitFor(f.ID, "STAGE-OK", nil)
+		// Post-restore fixup: own hostname, reseeded RNG, current clock.
+		if h, _ := exec(f.ID, "", "hostname"); h != "dune-"+f.ID {
+			t.Errorf("fork %s hostname = %q", f.ID, h)
+		}
+		u, _ := exec(f.ID, "", "cat", "/proc/sys/kernel/random/uuid")
+		if uuids[u] {
+			t.Errorf("fork %s: uuid %s repeats across forks (RNG not reseeded)", f.ID, u)
+		}
+		uuids[u] = true
+		ts, _ := exec(f.ID, "", "date", "+%s")
+		if sec, _ := strconv.ParseInt(ts, 10, 64); time.Since(time.Unix(sec, 0)).Abs() > 5*time.Second {
+			t.Errorf("fork %s clock %s, host %d", f.ID, ts, time.Now().Unix())
+		}
 	}
 
 	// Pause/resume a fork.

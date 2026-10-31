@@ -23,6 +23,9 @@ type Config struct {
 	Firecracker    string `json:"firecracker"`
 	Jailer         string `json:"jailer"`
 	SnapshotEditor string `json:"snapshot_editor"`
+	// Agent is the guest agent installed into images at import.
+	// Default <data_dir>/bin/dune-agent.
+	Agent string `json:"agent"`
 
 	Socket string `json:"socket"` // default /run/dune/duned.sock (root only)
 	// Listen is the tailnet address: "tailscale" (default) binds this
@@ -59,6 +62,7 @@ func loadConfig(path string) (Config, error) {
 	def(&c.Firecracker, filepath.Join(c.DataDir, "bin", "firecracker"))
 	def(&c.Jailer, filepath.Join(c.DataDir, "bin", "jailer"))
 	def(&c.SnapshotEditor, filepath.Join(c.DataDir, "bin", "snapshot-editor"))
+	def(&c.Agent, filepath.Join(c.DataDir, "bin", "dune-agent"))
 	def(&c.Socket, "/run/dune/duned.sock")
 	if c.UIDBase == 0 {
 		c.UIDBase = 100000

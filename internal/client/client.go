@@ -169,6 +169,12 @@ func (c *Client) Fork(snapID string, count int) ([]model.VM, error) {
 	return resp.VMs, err
 }
 
+// Exec runs a command in the VM through its guest agent.
+func (c *Client) Exec(id string, req model.ExecRequest) (model.ExecResult, error) {
+	var r model.ExecResult
+	return r, c.do("POST", "/v1/vms/"+url.PathEscape(id)+"/exec", req, &r)
+}
+
 // Console returns the last tail bytes of the VM's serial console log.
 func (c *Client) Console(id string, tail int) ([]byte, error) {
 	resp, err := c.raw("GET", "/v1/vms/"+url.PathEscape(id)+"/console?tail="+strconv.Itoa(tail), "", nil)

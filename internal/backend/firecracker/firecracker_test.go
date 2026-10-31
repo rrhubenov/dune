@@ -64,7 +64,7 @@ func TestBootSnapshotFork(t *testing.T) {
 		})
 		return backend.Machine{
 			ID: id, VCPUs: 1, MemMiB: 512, Kernel: kernel, Rootfs: rootfs,
-			NetNS: netns.Path(id), UID: 100000 + slot, GID: 100000 + slot,
+			NetNS: netns.Path(id), UID: 100000 + slot, GID: 100000 + slot, Hostname: id,
 		}
 	}
 

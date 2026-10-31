@@ -3,7 +3,10 @@
 // machines and reads/writes snapshot files in directories it is handed.
 package backend
 
-import "context"
+import (
+	"context"
+	"net"
+)
 
 type SnapshotKind string
 
@@ -20,8 +23,11 @@ type Machine struct {
 	Kernel string // host path; used by Boot only
 	Rootfs string // host path to the disk image to clone; used by Boot only
 	NetNS  string // netns file the VM joins, e.g. /run/netns/dune-<id>
-	UID    int    // unprivileged user the VM process runs as
-	GID    int
+	// Hostname is set at boot. Restored machines keep their snapshot's
+	// hostname until the guest agent changes it.
+	Hostname string
+	UID      int // unprivileged user the VM process runs as
+	GID      int
 }
 
 type Backend interface {
@@ -42,4 +48,6 @@ type Backend interface {
 	Stop(ctx context.Context, id string, pid int) error
 	// Alive reports whether pid is still this machine's process.
 	Alive(id string, pid int) bool
+	// DialAgent opens a stream to the guest agent's vsock port.
+	DialAgent(ctx context.Context, id string, port uint32) (net.Conn, error)
 }

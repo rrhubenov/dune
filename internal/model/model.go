@@ -77,6 +77,24 @@ type ForkResponse struct {
 	Error string `json:"error,omitempty"` // set if only some forks started
 }
 
+// ExecRequest runs a command in the guest via the agent.
+type ExecRequest struct {
+	Argv       []string `json:"argv"`
+	Env        []string `json:"env,omitempty"`   // KEY=VALUE, added to the agent's defaults
+	Dir        string   `json:"dir,omitempty"`   // default /root
+	Stdin      []byte   `json:"stdin,omitempty"` // base64 in JSON
+	TimeoutSec int      `json:"timeout_sec,omitempty"`
+}
+
+type ExecResult struct {
+	Stdout   []byte `json:"stdout"`
+	Stderr   []byte `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+	// Error is set when the command could not run at all (not found, timed
+	// out); ExitCode is then -1.
+	Error string `json:"error,omitempty"`
+}
+
 type Error struct {
 	Error string `json:"error"`
 }

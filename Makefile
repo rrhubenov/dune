@@ -7,6 +7,7 @@ build:
 	$(GO) build -o bin/duned ./cmd/duned
 	$(GO) build -o bin/dune ./cmd/dune
 	GOOS=darwin GOARCH=arm64 $(GO) build -o bin/dune-darwin-arm64 ./cmd/dune
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -ldflags=-s -o bin/dune-agent ./cmd/dune-agent
 
 test:
 	$(GO) vet ./...
@@ -25,6 +26,7 @@ roottest:
 install: build
 	sudo install -m 755 bin/duned $(DESTDIR)$(PREFIX)/bin/duned
 	sudo install -m 755 bin/dune $(DESTDIR)$(PREFIX)/bin/dune
+	sudo install -D -m 755 bin/dune-agent /srv/dune/bin/dune-agent
 	sudo install -m 644 contrib/duned.service /etc/systemd/system/duned.service
 	sudo systemctl daemon-reload
 

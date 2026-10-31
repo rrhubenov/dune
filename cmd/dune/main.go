@@ -6,12 +6,10 @@
 package main
 
 import (
-	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -34,7 +32,7 @@ VMs:
   fork SNAP [-n N]                            start N VMs from a snapshot
   rm ID...                                    stop and delete VMs
   console ID [--tail BYTES]                   print serial console output
-  exec ID CMD...                              run CMD on the serial console (BETA)
+  exec [--sh] [--timeout S] ID CMD [ARGS...]  run a command via the guest agent
 
 Snapshots:
   snap ls                                     snapshot tree, with VMs forked from each
@@ -268,71 +266,43 @@ func cmdConsole(c *client.Client, args []string) error {
 	return nil
 }
 
-// cmdExec types a command on the guest's serial console and prints what
-// appears between it and an end marker. BETA: no exit code, no stdin,
-// output interleaves with kernel messages; replaced by a vsock agent later.
+// cmdExec runs a command in the guest via the agent. Stdin is passed through
+// when it is not a terminal; dune exits with the command's exit code.
 func cmdExec(c *client.Client, args []string) error {
-	if len(args) < 2 {
-		return errors.New("usage: dune exec ID CMD...")
-	}
-	id, cmd := args[0], strings.Join(args[1:], " ")
-	b := make([]byte, 4)
-	rand.Read(b)
-	tag := hex.EncodeToString(b)
-	ready, begin, end := "DUNE-READY-"+tag, "DUNE-BEGIN-"+tag, "DUNE-END-"+tag
-	// Quotes split the markers so the echoed command line never matches.
-	// Input sent before the guest shell is up is lost, so first probe with a
-	// harmless echo until the shell answers, then send the command once.
-	probe := fmt.Sprintf("echo DUNE-READY''-%s\n", tag)
-	deadline := time.Now().Add(60 * time.Second)
-	for {
-		if time.Now().After(deadline) {
-			return errors.New("guest shell not responding on the serial console (see dune console)")
-		}
-		if err := c.SendConsole(id, []byte(probe)); err != nil {
-			return err
-		}
-		ok, err := waitConsole(c, id, ready, time.Second)
-		if err != nil {
-			return err
-		}
-		if ok {
-			break
-		}
-	}
-	line := fmt.Sprintf("echo DUNE-BEGIN''-%s; %s; echo DUNE-END''-%s\n", tag, cmd, tag)
-	if err := c.SendConsole(id, []byte(line)); err != nil {
+	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
+	timeout := fs.Int("timeout", 0, "seconds (default 60, max 3600)")
+	shell := fs.Bool("sh", false, "run CMD... joined as one sh -c script")
+	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	deadline = time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		out, err := c.Console(id, 256<<10)
+	if fs.NArg() < 2 {
+		return errors.New("usage: dune exec [--sh] [--timeout S] ID CMD [ARGS...]")
+	}
+	id, argv := fs.Arg(0), fs.Args()[1:]
+	if *shell {
+		argv = []string{"sh", "-c", strings.Join(argv, " ")}
+	}
+	req := model.ExecRequest{Argv: argv, TimeoutSec: *timeout}
+	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
+		in, err := io.ReadAll(io.LimitReader(os.Stdin, 16<<20))
 		if err != nil {
 			return err
 		}
-		i := bytes.LastIndex(out, []byte(begin+"\r\n"))
-		j := bytes.LastIndex(out, []byte(end))
-		if i >= 0 && j > i {
-			os.Stdout.Write(bytes.ReplaceAll(out[i+len(begin)+2:j], []byte("\r\n"), []byte("\n")))
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
+		req.Stdin = in
 	}
-	return errors.New("timed out waiting for command output (see dune console)")
-}
-
-// waitConsole polls the console log for want until timeout.
-func waitConsole(c *client.Client, id, want string, timeout time.Duration) (bool, error) {
-	for end := time.Now().Add(timeout); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
-		out, err := c.Console(id, 64<<10)
-		if err != nil {
-			return false, err
-		}
-		if bytes.Contains(out, []byte(want)) {
-			return true, nil
-		}
+	res, err := c.Exec(id, req)
+	if err != nil {
+		return err
 	}
-	return false, nil
+	os.Stdout.Write(res.Stdout)
+	os.Stderr.Write(res.Stderr)
+	if res.Error != "" {
+		return errors.New(res.Error)
+	}
+	if res.ExitCode != 0 {
+		os.Exit(res.ExitCode)
+	}
+	return nil
 }
 
 // cmdSnapLs prints the snapshot forest: each snapshot under its parent, and

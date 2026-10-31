@@ -11,13 +11,16 @@ package vm
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/rrhubenov/dune/internal/agent"
 	"github.com/rrhubenov/dune/internal/backend"
 	"github.com/rrhubenov/dune/internal/image"
 	"github.com/rrhubenov/dune/internal/model"
@@ -39,6 +42,9 @@ type Config struct {
 	// VM processes run as UIDBase+slot (same for gid), so no two live VMs
 	// share a uid.
 	UIDBase int
+	// AgentBinary is the guest agent installed into imported images
+	// (static linux/amd64). Empty: images get no agent.
+	AgentBinary string
 }
 
 type Manager struct {
@@ -75,8 +81,16 @@ func (m *Manager) machine(vm store.VM) backend.Machine {
 	id := m.cfg.UIDBase + vm.NetSlot
 	return backend.Machine{
 		ID: vm.ID, VCPUs: vm.VCPUs, MemMiB: vm.MemMiB,
-		NetNS: netns.Path(vm.ID), UID: id, GID: id,
+		NetNS: netns.Path(vm.ID), UID: id, GID: id, Hostname: hostname(vm.ID),
 	}
+}
+
+func hostname(id string) string { return "dune-" + id }
+
+func (m *Manager) agent(id string) *agent.Client {
+	return agent.NewClient(func(ctx context.Context) (net.Conn, error) {
+		return m.cfg.Backend.DialAgent(ctx, id, agent.Port)
+	})
 }
 
 // Recover reconciles the DB with reality after a daemon (re)start: VMs whose
@@ -120,7 +134,7 @@ func (m *Manager) ImportImage(name, kernel, rootfs string) (store.Image, error) 
 			return im, err
 		}
 		if c.dst == im.Rootfs {
-			if err := image.Prepare(c.dst+".tmp", dir, image.DefaultNameservers); err != nil {
+			if err := image.Prepare(c.dst+".tmp", dir, image.DefaultNameservers, m.cfg.AgentBinary); err != nil {
 				os.Remove(c.dst + ".tmp")
 				return im, fmt.Errorf("prepare rootfs: %w", err)
 			}
@@ -282,9 +296,51 @@ func (m *Manager) Fork(ctx context.Context, snapID string, count int) ([]store.V
 			return out, err
 		}
 		vm.State, vm.PID = store.VMRunning, pid
+		// Non-fatal: the fork runs either way, e.g. from images without an
+		// agent. But without fresh entropy it shares RNG state with siblings.
+		if err := m.fixup(ctx, vm.ID); err != nil {
+			slog.Warn("post-restore fixup failed", "vm", vm.ID, "err", err)
+		}
 		out = append(out, vm)
 	}
 	return out, nil
+}
+
+// fixup gives a restored guest the current time, fresh entropy and its own
+// hostname. The agent's listener lives in the restored memory, so it answers
+// right after resume; the retry covers vsock transport reset after restore.
+func (m *Manager) fixup(ctx context.Context, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	seed := make([]byte, 64)
+	rand.Read(seed)
+	c := m.agent(id)
+	for {
+		err := c.Fixup(ctx, agent.FixupRequest{UnixNano: time.Now().UnixNano(), Entropy: seed, Hostname: hostname(id)})
+		if err == nil || ctx.Err() != nil {
+			return err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Exec runs a command in a running VM through its guest agent.
+func (m *Manager) Exec(ctx context.Context, id string, req agent.ExecRequest) (agent.ExecResult, error) {
+	vm, err := m.cfg.DB.GetVM(id)
+	if err != nil {
+		return agent.ExecResult{}, err
+	}
+	if vm.State != store.VMRunning {
+		return agent.ExecResult{}, fmt.Errorf("vm %s is %s: %w", id, vm.State, ErrState)
+	}
+	if len(req.Argv) == 0 {
+		return agent.ExecResult{}, errors.New("empty command")
+	}
+	res, err := m.agent(id).Exec(ctx, req)
+	if err != nil {
+		return res, fmt.Errorf("guest agent: %w", err)
+	}
+	return res, nil
 }
 
 func (m *Manager) Delete(ctx context.Context, id string) error {

@@ -69,7 +69,12 @@ func serve(configPath string) error {
 		ChrootBase:     st.Path("jail"),
 		Scopes:         firecracker.SystemdAvailable(),
 	})
-	mgr := vm.New(vm.Config{Storage: st, DB: db, Backend: fc, UIDBase: cfg.UIDBase})
+	agentBin := cfg.Agent
+	if _, err := os.Stat(agentBin); err != nil {
+		slog.Warn("no guest agent binary; imported images get no agent", "err", err)
+		agentBin = ""
+	}
+	mgr := vm.New(vm.Config{Storage: st, DB: db, Backend: fc, UIDBase: cfg.UIDBase, AgentBinary: agentBin})
 	if err := mgr.Recover(); err != nil {
 		return fmt.Errorf("recover: %w", err)
 	}
