@@ -54,7 +54,7 @@ func TestBootSnapshotFork(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
-			if err := b.Stop(ctx, id); err != nil {
+			if err := b.Stop(ctx, id, 0); err != nil {
 				t.Error(err)
 			}
 			if err := netns.Delete(id, slot); err != nil {

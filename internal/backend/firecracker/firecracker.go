@@ -17,6 +17,7 @@
 package firecracker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -120,7 +121,7 @@ func (b *Backend) Boot(ctx context.Context, m backend.Machine) (pid int, err err
 	}
 	defer func() {
 		if err != nil {
-			b.Stop(context.Background(), m.ID)
+			b.Stop(context.Background(), m.ID, 0)
 		}
 	}()
 	if err := b.privateDisk(m, m.Rootfs); err != nil {
@@ -166,7 +167,7 @@ func (b *Backend) Restore(ctx context.Context, m backend.Machine, chain []string
 	}
 	defer func() {
 		if err != nil {
-			b.Stop(context.Background(), m.ID)
+			b.Stop(context.Background(), m.ID, 0)
 		}
 	}()
 	if err := b.privateDisk(m, filepath.Join(last, DiskFile)); err != nil {
@@ -289,7 +290,7 @@ func (b *Backend) Snapshot(ctx context.Context, id, dir string, kind backend.Sna
 	return nil
 }
 
-func (b *Backend) Stop(ctx context.Context, id string) error {
+func (b *Backend) Stop(ctx context.Context, id string, pid int) error {
 	b.mu.Lock()
 	p := b.procs[id]
 	delete(b.procs, id)
@@ -304,24 +305,31 @@ func (b *Backend) Stop(ctx context.Context, id string) error {
 		case <-time.After(10 * time.Second):
 			return fmt.Errorf("vm %s: pid %d did not exit after SIGKILL", id, p.pid)
 		}
-	}
-	return os.RemoveAll(b.JailDir(id))
-}
-
-// StopPID kills a VM process this daemon instance did not start (e.g. after a
-// daemon restart), then removes its jail. pid must be verified by the caller.
-func (b *Backend) StopPID(ctx context.Context, id string, pid int) error {
-	if pid > 0 {
+	} else if b.Alive(id, pid) {
+		// Not our child (daemon restarted); init reaps it, we poll.
 		syscall.Kill(pid, syscall.SIGKILL)
 		deadline := time.Now().Add(10 * time.Second)
-		for syscall.Kill(pid, 0) == nil {
+		for b.Alive(id, pid) {
 			if time.Now().After(deadline) {
 				return fmt.Errorf("vm %s: pid %d did not exit after SIGKILL", id, pid)
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	return b.Stop(ctx, id)
+	return os.RemoveAll(b.JailDir(id))
+}
+
+// Alive checks /proc/<pid>/cmdline for the jailer's "--id <id>" arguments,
+// which Firecracker keeps after the jailer execs it.
+func (b *Backend) Alive(id string, pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	cmdline, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err != nil {
+		return false
+	}
+	return bytes.Contains(cmdline, []byte("\x00--id\x00"+id+"\x00"))
 }
 
 // privateDisk reflinks src into the VM's jail as its writable disk. The

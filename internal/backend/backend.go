@@ -36,6 +36,10 @@ type Backend interface {
 	// dir, each later dir a diff on top of the previous one. The disk comes
 	// from the last dir. m.Kernel and m.Rootfs are ignored.
 	Restore(ctx context.Context, m Machine, chain []string) (pid int, err error)
-	// Stop kills the machine and removes its private files. Idempotent.
-	Stop(ctx context.Context, id string) error
+	// Stop kills the machine and removes its private files. Idempotent. pid
+	// is the last known process id (0 if none); it is only killed if it is
+	// verifiably this machine, since it may come from before a daemon restart.
+	Stop(ctx context.Context, id string, pid int) error
+	// Alive reports whether pid is still this machine's process.
+	Alive(id string, pid int) bool
 }
