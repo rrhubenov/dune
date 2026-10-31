@@ -33,6 +33,11 @@ const (
 	GuestMAC  = "06:00:ac:10:00:02" // guest derives 172.16.0.2 from this
 	HostRange = "10.200.0.0/16"
 
+	// KernelIPArg is the guest kernel boot argument that configures eth0
+	// and the default route before init runs:
+	// ip=<client>::<gateway>:<netmask>:<hostname>:<device>:<autoconf>
+	KernelIPArg = "ip=" + GuestIP + "::172.16.0.1:255.255.255.252::eth0:off"
+
 	hostIfPrefix = "dune" // host veth names: dune-<vm id>
 	nsVeth       = "veth0"
 	fwdChain     = "DUNE-FORWARD"

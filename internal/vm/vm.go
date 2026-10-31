@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/rrhubenov/dune/internal/backend"
+	"github.com/rrhubenov/dune/internal/image"
 	"github.com/rrhubenov/dune/internal/model"
 	"github.com/rrhubenov/dune/internal/netns"
 	"github.com/rrhubenov/dune/internal/run"
@@ -99,7 +100,8 @@ func (m *Manager) Recover() error {
 
 func (m *Manager) Images() ([]store.Image, error) { return m.cfg.DB.ListImages() }
 
-// ImportImage copies a kernel and rootfs into the store under name.
+// ImportImage copies a kernel and rootfs into the store under name and
+// prepares the rootfs for dune's guest network (see package image).
 func (m *Manager) ImportImage(name, kernel, rootfs string) (store.Image, error) {
 	defer m.lock("image:" + name)()
 	dir := m.imageDir(name)
@@ -116,6 +118,12 @@ func (m *Manager) ImportImage(name, kernel, rootfs string) (store.Image, error) 
 		// Reflinks when src is on the store, sparse copy otherwise.
 		if err := run.Cmd("cp", "--reflink=auto", "--sparse=always", c.src, c.dst+".tmp"); err != nil {
 			return im, err
+		}
+		if c.dst == im.Rootfs {
+			if err := image.Prepare(c.dst+".tmp", dir, image.DefaultNameservers); err != nil {
+				os.Remove(c.dst + ".tmp")
+				return im, fmt.Errorf("prepare rootfs: %w", err)
+			}
 		}
 		if err := os.Chmod(c.dst+".tmp", 0o444); err != nil {
 			return im, err

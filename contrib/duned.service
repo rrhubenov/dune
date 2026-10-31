@@ -1,0 +1,17 @@
+[Unit]
+Description=dune VM daemon
+Documentation=https://github.com/rrhubenov/dune
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/duned
+Restart=on-failure
+RestartSec=2
+# VMs are children of duned but must outlive it (restarts, upgrades): only
+# stop the daemon itself. duned re-adopts running VMs on start.
+KillMode=process
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

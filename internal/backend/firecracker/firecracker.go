@@ -13,7 +13,8 @@
 // images and snapshots, so all of these copies are reflinks or hard links.
 //
 // Next to root/ (outside the chroot) the backend keeps console.log (guest
-// serial output) and firecracker.log (Firecracker's own stderr).
+// serial output) and jailer.log (jailer/Firecracker stderr). Firecracker's
+// own log goes to root/firecracker.log.
 package firecracker
 
 import (
@@ -53,6 +54,7 @@ const (
 	jailVMState = "/vmstate"
 	jailMem     = "/mem"
 	jailSock    = "/run/api.sock"
+	jailLog     = "/firecracker.log"
 	snapVMState = "/snap.vmstate" // where Firecracker writes a new snapshot
 	snapMem     = "/snap.mem"
 )
@@ -140,7 +142,7 @@ func (b *Backend) Boot(ctx context.Context, m backend.Machine) (pid int, err err
 		body any
 	}{
 		{"/machine-config", machineConfig{VCPUCount: m.VCPUs, MemSizeMiB: m.MemMiB, TrackDirtyPages: true}},
-		{"/boot-source", bootSource{KernelImagePath: jailKernel, BootArgs: b.cfg.BootArgs}},
+		{"/boot-source", bootSource{KernelImagePath: jailKernel, BootArgs: b.cfg.BootArgs + " " + netns.KernelIPArg}},
 		{"/drives/rootfs", drive{DriveID: "rootfs", PathOnHost: jailDisk, IsRootDevice: true}},
 		{"/network-interfaces/eth0", networkInterface{IfaceID: "eth0", GuestMAC: netns.GuestMAC, HostDevName: netns.TapName}},
 		{"/actions", action{ActionType: "InstanceStart"}},
@@ -375,11 +377,21 @@ func (b *Backend) start(ctx context.Context, m backend.Machine) (int, error) {
 		return 0, err
 	}
 	defer console.Close()
-	fclog, err := os.OpenFile(filepath.Join(jail, "firecracker.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o640)
+	stderr, err := os.OpenFile(filepath.Join(jail, "jailer.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o640)
 	if err != nil {
 		return 0, err
 	}
-	defer fclog.Close()
+	defer stderr.Close()
+	// Firecracker logs to stdout (the console) unless given a log file,
+	// which must exist and be writable by the jailed user.
+	fclog, err := os.OpenFile(b.hostPath(m.ID, jailLog), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o640)
+	if err != nil {
+		return 0, err
+	}
+	fclog.Close()
+	if err := os.Chown(b.hostPath(m.ID, jailLog), m.UID, m.GID); err != nil {
+		return 0, err
+	}
 
 	cmd := exec.Command(b.cfg.Jailer,
 		"--id", m.ID,
@@ -390,13 +402,16 @@ func (b *Backend) start(ctx context.Context, m backend.Machine) (int, error) {
 		"--netns", m.NetNS,
 		"--",
 		"--api-sock", jailSock,
+		"--log-path", jailLog,
+		"--level", "Info",
+		"--show-level",
 	)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return 0, err
 	}
 	cmd.Stdout = console
-	cmd.Stderr = fclog
+	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		stdin.Close()
@@ -419,15 +434,21 @@ func (b *Backend) start(ctx context.Context, m backend.Machine) (int, error) {
 		}
 		select {
 		case <-p.done:
-			return 0, fmt.Errorf("vm %s: jailer exited: %s", m.ID, tail(filepath.Join(jail, "firecracker.log")))
+			return 0, fmt.Errorf("vm %s: jailer exited: %s", m.ID, b.logTails(m.ID))
 		case <-ctx.Done():
 			return 0, ctx.Err()
 		case <-time.After(10 * time.Millisecond):
 		}
 		if time.Now().After(deadline) {
-			return 0, fmt.Errorf("vm %s: API socket did not appear: %s", m.ID, tail(filepath.Join(jail, "firecracker.log")))
+			return 0, fmt.Errorf("vm %s: API socket did not appear: %s", m.ID, b.logTails(m.ID))
 		}
 	}
+}
+
+// logTails returns the ends of the jailer and Firecracker logs, for errors.
+func (b *Backend) logTails(id string) string {
+	return "jailer.log: " + tail(filepath.Join(b.JailDir(id), "jailer.log")) +
+		" firecracker.log: " + tail(b.hostPath(id, jailLog))
 }
 
 // tail returns the last ~1 KiB of a log file, for error messages.

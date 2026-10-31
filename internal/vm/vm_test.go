@@ -171,7 +171,8 @@ func TestLifecycle(t *testing.T) {
 	}
 	run(grand[0].ID, `grep -q f1 /root/stage && echo GRA""ND-OK`)
 	waitFor(grand[0].ID, "GRAND-OK", nil)
-	run(grand[0].ID, `ip route replace default via 172.16.0.1; echo nameserver 1.1.1.1 > /etc/resolv.conf; ping -c1 -W3 1.1.1.1 >/dev/null && echo GNET""-OK`)
+	// Route comes from the kernel ip= arg, DNS from image import: no setup.
+	run(grand[0].ID, `ping -c1 -W3 one.one.one.one >/dev/null && echo GNET""-OK`)
 	waitFor(grand[0].ID, "GNET-OK", nil)
 
 	// d1 has children (f1) and heads (other forks): refuse.
