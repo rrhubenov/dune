@@ -95,6 +95,17 @@ type ExecResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+// TerminalControl is a JSON text message on /v1/vms/{id}/terminal. Clients
+// send {"type":"resize","cols":C,"rows":R}; the daemon sends
+// {"type":"exit","code":N} when the shell ends, then closes. Binary messages
+// carry terminal bytes both ways.
+type TerminalControl struct {
+	Type string `json:"type"`
+	Cols uint16 `json:"cols,omitempty"`
+	Rows uint16 `json:"rows,omitempty"`
+	Code int    `json:"code"`
+}
+
 type Error struct {
 	Error string `json:"error"`
 }

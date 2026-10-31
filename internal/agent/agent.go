@@ -38,11 +38,12 @@ type Health struct {
 
 type Client struct {
 	http *http.Client
+	dial func(ctx context.Context) (net.Conn, error)
 }
 
 // NewClient returns a client that opens a fresh connection per request with dial.
 func NewClient(dial func(ctx context.Context) (net.Conn, error)) *Client {
-	return &Client{http: &http.Client{Transport: &http.Transport{
+	return &Client{dial: dial, http: &http.Client{Transport: &http.Transport{
 		DialContext:       func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx) },
 		DisableKeepAlives: true,
 	}}}

@@ -152,6 +152,41 @@ func TestLifecycle(t *testing.T) {
 		t.Errorf("stdin passthrough = %q", out)
 	}
 
+	// Interactive terminal: run a command, resize, exit with a code.
+	pty, err := m.OpenPTY(ctx, parent.ID, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var screen strings.Builder
+	expect := func(want string) int {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for !strings.Contains(screen.String(), want) {
+			if time.Now().After(deadline) {
+				t.Fatalf("pty: %q not seen; output:\n%s", want, screen.String())
+			}
+			data, exited, code, err := pty.Next()
+			if err != nil {
+				t.Fatalf("pty: %v; output:\n%s", err, screen.String())
+			}
+			if exited {
+				return code
+			}
+			screen.Write(data)
+		}
+		return 0
+	}
+	pty.Write([]byte("echo PTY$((40+2))\n"))
+	expect("PTY42")
+	pty.Resize(100, 30)
+	pty.Write([]byte("stty size\n"))
+	expect("30 100")
+	pty.Write([]byte("exit 3\n"))
+	if code := expect("\x00never"); code != 3 {
+		t.Errorf("pty exit code = %d, want 3", code)
+	}
+	pty.Close()
+
 	var base, d1 store.Snapshot
 	timed("pin (auto: full)", func() { base, err = m.Pin(ctx, parent.ID, "") })
 	if err != nil || base.Kind != store.SnapFull {

@@ -51,6 +51,7 @@ func main() {
 	})
 	mux.HandleFunc("POST /exec", handleExec)
 	mux.HandleFunc("POST /fixup", handleFixup)
+	mux.HandleFunc("GET /pty", handlePTY)
 	log.Fatal((&http.Server{Handler: mux}).Serve(ln))
 }
 

@@ -33,6 +33,7 @@ VMs:
   rm ID...                                    stop and delete VMs
   console ID [--tail BYTES]                   print serial console output
   exec [--sh] [--timeout S] ID CMD [ARGS...]  run a command via the guest agent
+  shell ID                                    interactive login shell
 
 Snapshots:
   snap ls                                     snapshot tree, with VMs forked from each
@@ -55,6 +56,9 @@ func main() {
 	c, err := connect()
 	if err == nil {
 		err = dispatch(c, os.Args[1], os.Args[2:])
+	}
+	if code, ok := asExitCode(err); ok {
+		os.Exit(code)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "dune:", err)
@@ -91,6 +95,8 @@ func dispatch(c *client.Client, cmd string, args []string) error {
 		return cmdConsole(c, args)
 	case "exec":
 		return cmdExec(c, args)
+	case "shell", "sh":
+		return cmdShell(c, args)
 	case "snap", "snaps":
 		sub := "ls"
 		if len(args) > 0 {

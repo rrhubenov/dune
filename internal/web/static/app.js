@@ -249,16 +249,20 @@ function openTerminal(id) {
   ws.binaryType = "arraybuffer";
   termWS = ws;
   const enc = new TextEncoder();
+  let exited = false;
   ws.onmessage = (m) => {
     if (typeof m.data === "string") {
       const msg = JSON.parse(m.data);
-      if (msg.type === "exit") term.write(`\r\n[exited with code ${msg.code}]\r\n`);
+      if (msg.type === "exit") {
+        exited = true;
+        term.write(`\r\n[exited with code ${msg.code}]\r\n`);
+      }
       return;
     }
     term.write(new Uint8Array(m.data));
   };
   ws.onclose = (e) => {
-    if (termWS === ws && term) term.write(`\r\n[disconnected${e.reason ? ": " + e.reason : ""}]\r\n`);
+    if (termWS === ws && term && !exited) term.write(`\r\n[disconnected${e.reason ? ": " + e.reason : ""}]\r\n`);
   };
   term.onData((d) => ws.readyState === WebSocket.OPEN && ws.send(enc.encode(d)));
   term.onResize(({ cols, rows }) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: "resize", cols, rows })));

@@ -68,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/snapshots/{id}", s.deleteSnapshot)
 	mux.HandleFunc("POST /v1/snapshots/{id}/fork", s.forkSnapshot)
 	mux.HandleFunc("GET /v1/events", s.events)
+	mux.HandleFunc("GET /v1/vms/{id}/terminal", s.terminal)
 	if s.UI != nil {
 		mux.Handle("GET /", s.UI)
 	}

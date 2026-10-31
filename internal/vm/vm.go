@@ -335,6 +335,22 @@ func (m *Manager) fixup(ctx context.Context, id string) error {
 	}
 }
 
+// OpenPTY starts a login shell on a terminal in a running VM.
+func (m *Manager) OpenPTY(ctx context.Context, id string, cols, rows uint16) (*agent.PTY, error) {
+	vm, err := m.cfg.DB.GetVM(id)
+	if err != nil {
+		return nil, err
+	}
+	if vm.State != store.VMRunning {
+		return nil, fmt.Errorf("vm %s is %s: %w", id, vm.State, ErrState)
+	}
+	p, err := m.agent(id).OpenPTY(ctx, cols, rows)
+	if err != nil {
+		return nil, fmt.Errorf("guest agent: %w", err)
+	}
+	return p, nil
+}
+
 // Exec runs a command in a running VM through its guest agent.
 func (m *Manager) Exec(ctx context.Context, id string, req agent.ExecRequest) (agent.ExecResult, error) {
 	vm, err := m.cfg.DB.GetVM(id)

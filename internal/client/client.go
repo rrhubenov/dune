@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/coder/websocket"
+
 	"github.com/rrhubenov/dune/internal/model"
 )
 
@@ -174,6 +176,24 @@ func (c *Client) Fork(snapID string, count int) ([]model.VM, error) {
 func (c *Client) Exec(id string, req model.ExecRequest) (model.ExecResult, error) {
 	var r model.ExecResult
 	return r, c.do("POST", "/v1/vms/"+url.PathEscape(id)+"/exec", req, &r)
+}
+
+// Terminal opens a login shell in the VM. See model.TerminalControl for the
+// message protocol.
+func (c *Client) Terminal(ctx context.Context, id string, cols, rows int) (*websocket.Conn, error) {
+	u := fmt.Sprintf("%s/v1/vms/%s/terminal?cols=%d&rows=%d", c.base, url.PathEscape(id), cols, rows)
+	conn, resp, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPClient: c.http})
+	if err != nil {
+		if resp != nil && resp.Body != nil {
+			var e model.Error
+			if json.NewDecoder(resp.Body).Decode(&e) == nil && e.Error != "" {
+				return nil, errors.New(e.Error)
+			}
+		}
+		return nil, err
+	}
+	conn.SetReadLimit(1 << 20)
+	return conn, nil
 }
 
 // Console returns the last tail bytes of the VM's serial console log.
