@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 const defaultConfigPath = "/etc/dune/duned.json"
@@ -35,6 +37,12 @@ type Config struct {
 	AllowUsers []string `json:"allow_users"`
 
 	UIDBase int `json:"uid_base"` // default 100000; VMs run as uid_base+slot
+
+	// PortRange is where ports noticed in VMs are published on the tailnet
+	// address, "LO-HI" (default 20000-29999).
+	PortRange string `json:"port_range"`
+	portLo    int
+	portHi    int
 }
 
 func loadConfig(path string) (Config, error) {
@@ -66,6 +74,13 @@ func loadConfig(path string) (Config, error) {
 	def(&c.Socket, "/run/dune/duned.sock")
 	if c.UIDBase == 0 {
 		c.UIDBase = 100000
+	}
+	def(&c.PortRange, "20000-29999")
+	lo, hi, ok := strings.Cut(c.PortRange, "-")
+	c.portLo, _ = strconv.Atoi(strings.TrimSpace(lo))
+	c.portHi, _ = strconv.Atoi(strings.TrimSpace(hi))
+	if !ok || c.portLo < 1024 || c.portHi > 65535 || c.portLo > c.portHi {
+		return c, fmt.Errorf("port_range %q: want LO-HI within 1024-65535", c.PortRange)
 	}
 	return c, nil
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -43,19 +44,28 @@ const whoisTTL = time.Minute
 
 func (a *WhoisAuth) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		login, err := a.lookup(r.RemoteAddr)
+		login, err := a.Check(r.RemoteAddr)
 		if err != nil {
-			slog.Warn("whois failed", "remote", r.RemoteAddr, "err", err)
-			writeJSON(w, http.StatusForbidden, Error{Error: "cannot identify Tailscale peer"})
-			return
-		}
-		if !slices.Contains(a.Allow, login) {
-			slog.Warn("denied", "remote", r.RemoteAddr, "login", login)
-			writeJSON(w, http.StatusForbidden, Error{Error: "Tailscale user " + login + " is not allowed"})
+			writeJSON(w, http.StatusForbidden, Error{Error: err.Error()})
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, login)))
 	})
+}
+
+// Check returns the Tailscale login behind a remote "ip:port" if it is
+// allowed, and logs denials.
+func (a *WhoisAuth) Check(remote string) (string, error) {
+	login, err := a.lookup(remote)
+	if err != nil {
+		slog.Warn("whois failed", "remote", remote, "err", err)
+		return "", errors.New("cannot identify Tailscale peer")
+	}
+	if !slices.Contains(a.Allow, login) {
+		slog.Warn("denied", "remote", remote, "login", login)
+		return "", errors.New("Tailscale user " + login + " is not allowed")
+	}
+	return login, nil
 }
 
 func (a *WhoisAuth) lookup(remote string) (string, error) {

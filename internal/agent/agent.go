@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -19,6 +20,19 @@ import (
 )
 
 const Port = 1024
+
+// ErrUnsupported means the guest agent predates the endpoint (it answered
+// 404). Images get the agent at import, so old images and their snapshots
+// keep an old agent.
+var ErrUnsupported = errors.New("guest agent does not support this; re-import the image")
+
+func statusErr(method, path string, resp *http.Response, msg []byte) error {
+	err := fmt.Errorf("agent %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("%w (%w)", ErrUnsupported, err)
+	}
+	return err
+}
 
 type (
 	ExecRequest = model.ExecRequest
@@ -69,7 +83,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("agent %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(msg))
+		return statusErr(method, path, resp, msg)
 	}
 	if out == nil {
 		return nil

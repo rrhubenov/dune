@@ -1,5 +1,5 @@
-// Package store keeps daemon state in SQLite: images, VMs, snapshots and
-// network slot allocation. Files (disks, memory, vmstate) live on the storage
+// Package store keeps daemon state in SQLite: images, VMs, snapshots,
+// network slot and published host port allocation. Files (disks, memory, vmstate) live on the storage
 // path; this only records metadata and relationships.
 package store
 
@@ -20,6 +20,7 @@ var (
 	ErrNotFound    = errors.New("not found")
 	ErrHasChildren = errors.New("snapshot has children")
 	ErrNoNetSlots  = errors.New("no free network slots")
+	ErrNoHostPorts = errors.New("no free host ports in the publish range")
 )
 
 // MaxNetSlot bounds slot numbers: slot N owns 10.200.0.0/16 offset N*4 (/30).
@@ -47,7 +48,10 @@ type Store struct {
 	MinSlot int
 }
 
-const schema = `
+// migrations[i] takes the schema from user_version i to i+1.
+var migrations = []string{schemaV1, schemaV2}
+
+const schemaV1 = `
 CREATE TABLE images (
 	name       TEXT PRIMARY KEY,
 	kernel     TEXT NOT NULL,
@@ -79,6 +83,17 @@ CREATE TABLE snapshots (
 CREATE INDEX snapshots_parent ON snapshots(parent);
 `
 
+// schemaV2: host ports published for guest ports, kept so a dev server that
+// restarts comes back at the same URL.
+const schemaV2 = `
+CREATE TABLE ports (
+	vm_id      TEXT NOT NULL REFERENCES vms(id) ON DELETE CASCADE,
+	guest_port INTEGER NOT NULL,
+	host_port  INTEGER NOT NULL UNIQUE,
+	PRIMARY KEY (vm_id, guest_port)
+);
+`
+
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
@@ -91,10 +106,11 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	if version == 0 {
-		if _, err := db.Exec(schema + "PRAGMA user_version = 1;"); err != nil {
+	for v := version; v < len(migrations); v++ {
+		if _, err := db.Exec(fmt.Sprintf("BEGIN; %s PRAGMA user_version = %d; COMMIT;", migrations[v], v+1)); err != nil {
+			db.Exec("ROLLBACK")
 			db.Close()
-			return nil, fmt.Errorf("migrate: %w", err)
+			return nil, fmt.Errorf("migrate to v%d: %w", v+1, err)
 		}
 	}
 	return &Store{db: db, MinSlot: 1}, nil
@@ -304,6 +320,67 @@ func (s *Store) DeleteSnapshot(id string) error {
 		return fmt.Errorf("snapshot %s: %w", id, ErrHasChildren)
 	}
 	return s.exec1(`DELETE FROM snapshots WHERE id = ?`, id)
+}
+
+// Published ports
+
+// HostPort returns the host port published for a VM's guest port. The first
+// call allocates the lowest port in [lo, hi] that is neither taken nor
+// rejected by avoid; later calls return the same one while it is in range.
+// Allocations go away with DropHostPort or when the VM is deleted.
+func (s *Store) HostPort(vmID string, guest, lo, hi int, avoid func(int) bool) (int, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var hp int
+	err = tx.QueryRow(`SELECT host_port FROM ports WHERE vm_id = ? AND guest_port = ?`, vmID, guest).Scan(&hp)
+	switch {
+	case err == nil && hp >= lo && hp <= hi:
+		return hp, nil
+	case err == nil: // the range changed
+		if _, err := tx.Exec(`DELETE FROM ports WHERE vm_id = ? AND guest_port = ?`, vmID, guest); err != nil {
+			return 0, err
+		}
+	case !errors.Is(err, sql.ErrNoRows):
+		return 0, err
+	}
+	rows, err := tx.Query(`SELECT host_port FROM ports WHERE host_port BETWEEN ? AND ?`, lo, hi)
+	if err != nil {
+		return 0, err
+	}
+	used := map[int]bool{}
+	for rows.Next() {
+		var p int
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		used[p] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for hp = lo; hp <= hi; hp++ {
+		if !used[hp] && (avoid == nil || !avoid(hp)) {
+			break
+		}
+	}
+	if hp > hi {
+		return 0, ErrNoHostPorts
+	}
+	if _, err := tx.Exec(`INSERT INTO ports (vm_id, guest_port, host_port) VALUES (?, ?, ?)`, vmID, guest, hp); err != nil {
+		return 0, err
+	}
+	return hp, tx.Commit()
+}
+
+// DropHostPort forgets a VM's guest port allocation (no error if absent).
+func (s *Store) DropHostPort(vmID string, guest int) error {
+	_, err := s.db.Exec(`DELETE FROM ports WHERE vm_id = ? AND guest_port = ?`, vmID, guest)
+	return err
 }
 
 func (s *Store) exec1(q string, args ...any) error {

@@ -107,6 +107,19 @@ td.actions button { margin-left: 4px; }
 .lineage { font-size: 13px; }
 .muted { color: var(--muted); }
 
+tr.has-ports td { border-bottom: none; padding-bottom: 2px; }
+tr.ports td { padding-top: 0; white-space: normal; }
+.port-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.port {
+  display: inline-flex; gap: 4px; align-items: baseline; max-width: 100%;
+  font-size: 12px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 9px;
+  color: var(--text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.port b { font-weight: 500; }
+.port-num, .mono { font-family: var(--mono); }
+.port.http { border-color: var(--accent); }
+.port.http:hover { background: var(--bg); }
+
 .state { font-size: 12px; padding: 1px 7px; border-radius: 9px; border: 1px solid currentColor; }
 .state.running { color: var(--ok); }
 .state.paused { color: var(--warn); }

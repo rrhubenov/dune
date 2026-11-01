@@ -25,6 +25,7 @@ import (
 	"github.com/rrhubenov/dune/internal/hoststats"
 	"github.com/rrhubenov/dune/internal/model"
 	"github.com/rrhubenov/dune/internal/netns"
+	"github.com/rrhubenov/dune/internal/ports"
 	"github.com/rrhubenov/dune/internal/run"
 	"github.com/rrhubenov/dune/internal/storage"
 	"github.com/rrhubenov/dune/internal/store"
@@ -91,10 +92,21 @@ func serve(configPath string) error {
 		}
 		return hoststats.Collect(cfg.DataDir, cgs)
 	}
-	handler := (&api.Server{VMs: mgr, Storage: st, Console: fc, Events: hub, UI: web.Handler(), Host: host}).Handler()
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Ports noticed in VMs; published once the tailnet address is known.
+	auth := &api.WhoisAuth{Allow: cfg.AllowUsers}
+	pub := ports.New(ports.Config{
+		Source: mgr, Alloc: db, Events: hub, Lo: cfg.portLo, Hi: cfg.portHi,
+		Allow: func(remote net.Addr) bool {
+			_, err := auth.Check(remote.String())
+			return err == nil
+		},
+	})
+	go pub.Run(ctx)
+
+	handler := (&api.Server{VMs: mgr, Storage: st, Console: fc, Events: hub, UI: web.Handler(), Host: host, Ports: pub.List}).Handler()
 
 	local, err := listenUnix(cfg.Socket)
 	if err != nil {
@@ -109,7 +121,6 @@ func serve(configPath string) error {
 		if len(cfg.AllowUsers) == 0 {
 			slog.Warn("allow_users is empty: every tailnet request will be rejected")
 		}
-		auth := &api.WhoisAuth{Allow: cfg.AllowUsers}
 		remote := &http.Server{}
 		servers = append(servers, remote)
 		go func() {
@@ -126,6 +137,9 @@ func serve(configPath string) error {
 				return
 			}
 			slog.Info("listening", "tailnet", addr, "allow", cfg.AllowUsers, "hosts", hosts)
+			ip, _, _ := net.SplitHostPort(addr)
+			pub.SetIP(ip)
+			slog.Info("publishing VM ports", "ip", ip, "range", cfg.PortRange)
 			errc <- remote.Serve(ln)
 		}()
 	}

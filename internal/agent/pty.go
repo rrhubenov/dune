@@ -4,11 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"sync"
 )
 
@@ -102,25 +100,9 @@ func (p *PTY) Close() error { return p.conn.Close() }
 
 // OpenPTY starts a login shell in the guest on a terminal of the given size.
 func (c *Client) OpenPTY(ctx context.Context, cols, rows uint16) (*PTY, error) {
-	conn, err := c.dial(ctx)
+	conn, err := c.upgrade(ctx, fmt.Sprintf("/pty?cols=%d&rows=%d", cols, rows), PTYUpgrade)
 	if err != nil {
 		return nil, err
 	}
-	req := fmt.Sprintf("GET /pty?cols=%d&rows=%d HTTP/1.1\r\nHost: agent\r\nConnection: Upgrade\r\nUpgrade: %s\r\n\r\n", cols, rows, PTYUpgrade)
-	if _, err := io.WriteString(conn, req); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	br := bufio.NewReader(conn)
-	resp, err := http.ReadResponse(br, nil)
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusSwitchingProtocols {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		conn.Close()
-		return nil, errors.New("agent pty: " + resp.Status + ": " + string(msg))
-	}
-	return &PTY{conn: conn, r: br}, nil
+	return &PTY{conn: conn, r: bufio.NewReader(conn)}, nil
 }

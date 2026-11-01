@@ -15,7 +15,7 @@ blocks (XFS reflink) and memory pages (snapshot file mapped `MAP_PRIVATE`).
 |---|---|
 | `cmd/duned` | daemon, config `/etc/dune/duned.json` (all fields optional) |
 | `cmd/dune` | CLI; talks to `$DUNE_HOST` (unix socket or `http://<tailnet ip>:7070`) |
-| `cmd/dune-agent` | static guest agent: HTTP over vsock :1024 (exec, pty, fixup) |
+| `cmd/dune-agent` | static guest agent: HTTP over vsock :1024 (exec, pty, fixup, ports, tcp tunnel) |
 | `internal/vm` | Manager: create/pin/fork/delete orchestration, per-id locks, debounced fstrim |
 | `internal/backend/firecracker` | jailer launch, Firecracker API client, snapshot/restore, diff merge |
 | `internal/netns` | per-VM netns, veth, tap0, iptables chains |
@@ -25,6 +25,7 @@ blocks (XFS reflink) and memory pages (snapshot file mapped `MAP_PRIVATE`).
 | `internal/api` | HTTP API, `WhoisAuth` (Tailscale), `BrowserGuard` (Host + CSRF), WebSockets |
 | `internal/web/static` | embedded UI (vanilla JS, vendored xterm) |
 | `internal/hoststats` | meminfo + per-VM cgroup memory |
+| `internal/ports` | polls agents for listening ports, publishes them on `<tailnet ip>:20000-29999` |
 
 ## Build and test
 
@@ -40,7 +41,7 @@ Claude has no sudo on midas. Anything needing root (`make install`,
 Root integration tests (run by the user with sudo):
 - `DUNE_TEST_ROOT=1 bin/netns.test -test.v` (slot 16000)
 - `DUNE_TEST_FC=1 bin/fc.test -test.v` (slots 16001-16003, work dir `/srv/vms/dunetest`)
-- `DUNE_TEST_FC=1 bin/vm.test -test.v` (MinSlot 15000, work dir `/srv/vms/dunetest-vm`,
+- `DUNE_TEST_FC=1 bin/vm.test -test.v` (MinSlot 15000, work dir `/srv/vms/dunetest-vm`, publishes on `127.0.0.1:39100-39199`,
   uses `bin/dune-agent`)
 - Inputs default to the spike files in `/srv/vms/fc` (Firecracker v1.17.0 release dir,
   `vmlinux-6.1.188`, `ubuntu.ext4`); override with `DUNE_TEST_FC_RELEASE`,
@@ -84,6 +85,12 @@ UI changes: check headlessly with playwright-core and the cached
 - Tailnet requests: `WhoisAuth` then `BrowserGuard` (Host allowlist, `X-Dune-Request`
   on non-GET, Origin check on WebSocket). Local socket is root-only `0600`.
 - `api.statusWriter` must keep `Hijack`/`Flush`/`Unwrap` (WebSocket upgrades 501 otherwise).
+- Published VM ports: every connection passes `WhoisAuth.Check`; the tunnel dials the guest's
+  loopback (localhost-bound dev servers work). Their pages are same-site with the UI (same
+  host, other port), so the UI must stay cookie-free and WebSocket Origin checks must compare
+  host:port (`TestWebSocketOrigin`). Port links use `rel="noopener noreferrer"`.
+- The agent is baked into images at import: a new agent endpoint needs the image re-imported
+  (old agents answer 404 = `agent.ErrUnsupported`).
 
 ## Working with the user
 

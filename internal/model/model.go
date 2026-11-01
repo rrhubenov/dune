@@ -67,6 +67,26 @@ type HostStats struct {
 	Store     Usage  `json:"store"`
 }
 
+// Port is a TCP port listening in a running VM, as noticed by duned.
+type Port struct {
+	VMID    string `json:"vm_id"`
+	Port    int    `json:"port"`              // in the guest
+	Bind    string `json:"bind"`              // address it is bound to in the guest
+	Label   string `json:"label,omitempty"`   // short program name, e.g. "vite"
+	Process string `json:"process,omitempty"` // guest process name (comm)
+	Cmdline string `json:"cmdline,omitempty"`
+	Cwd     string `json:"cwd,omitempty"`
+	// HTTP is known once Probed: GET / answered with an HTTP response.
+	Probed bool   `json:"probed"`
+	HTTP   bool   `json:"http"`
+	Title  string `json:"title,omitempty"` // <title> of / if HTML
+	// Addr is where it is published on the tailnet (host:port), URL the
+	// same as http://Addr/ for HTTP ports. Empty when not published.
+	Addr  string    `json:"addr,omitempty"`
+	URL   string    `json:"url,omitempty"`
+	Since time.Time `json:"since"`
+}
+
 type ImportImageRequest struct {
 	Name   string `json:"name"`
 	Kernel string `json:"kernel"` // path on the daemon's host

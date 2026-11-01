@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,7 +18,9 @@ import (
 	"github.com/rrhubenov/dune/internal/agent"
 	"github.com/rrhubenov/dune/internal/backend"
 	"github.com/rrhubenov/dune/internal/backend/firecracker"
+	"github.com/rrhubenov/dune/internal/model"
 	"github.com/rrhubenov/dune/internal/netns"
+	"github.com/rrhubenov/dune/internal/ports"
 	"github.com/rrhubenov/dune/internal/storage"
 	"github.com/rrhubenov/dune/internal/store"
 )
@@ -187,6 +193,76 @@ func TestLifecycle(t *testing.T) {
 	}
 	pty.Close()
 
+	// A dev server bound to localhost only: noticed, labeled, reachable
+	// through the agent tunnel, and published by the ports publisher.
+	exec(parent.ID, "", "sh", "-c", `mkdir -p /root/site && echo '<title>dune test</title>' > /root/site/index.html &&
+		cd /root/site && setsid python3 -m http.server 8123 --bind 127.0.0.1 >/dev/null 2>&1 < /dev/null &`)
+	checkServer := func(id string) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			ps, err := m.ListenPorts(ctx, id)
+			if err != nil {
+				t.Fatalf("vm %s: ports: %v", id, err)
+			}
+			if i := slices.IndexFunc(ps, func(p agent.ListenPort) bool { return p.Port == 8123 }); i >= 0 {
+				if p := ps[i]; p.Addr != "127.0.0.1" || p.Process == "" || p.Cwd != "/root/site" {
+					t.Errorf("vm %s: port entry %+v", id, p)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("vm %s: port 8123 not listed: %+v", id, ps)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		c, err := m.DialPort(ctx, id, 8123)
+		if err != nil {
+			t.Fatalf("vm %s: dial 8123: %v", id, err)
+		}
+		defer c.Close()
+		fmt.Fprint(c, "GET / HTTP/1.0\r\n\r\n")
+		body, _ := io.ReadAll(c)
+		if !strings.Contains(string(body), "dune test") {
+			t.Errorf("vm %s: through tunnel: %q", id, body)
+		}
+	}
+	checkServer(parent.ID)
+	if _, err := m.DialPort(ctx, parent.ID, 8124); err == nil {
+		t.Error("dial to a closed port succeeded")
+	}
+	pubCtx, stopPub := context.WithCancel(ctx)
+	pub := ports.New(ports.Config{Source: m, Alloc: db, Lo: 39100, Hi: 39199, Interval: 200 * time.Millisecond,
+		Allow: func(net.Addr) bool { return true }})
+	pub.SetIP("127.0.0.1")
+	go pub.Run(pubCtx)
+	deadline := time.Now().Add(15 * time.Second)
+	var published model.Port
+	for published.URL == "" {
+		if time.Now().After(deadline) {
+			t.Fatalf("not published: %+v", pub.List(parent.ID))
+		}
+		time.Sleep(100 * time.Millisecond)
+		for _, p := range pub.List(parent.ID) {
+			if p.Port == 8123 && p.Probed {
+				published = p
+			}
+		}
+	}
+	if published.Title != "dune test" || published.Label != "http.server" {
+		t.Errorf("published = %+v", published)
+	}
+	if resp, err := http.Get(published.URL); err != nil {
+		t.Errorf("GET %s: %v", published.URL, err)
+	} else {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !strings.Contains(string(b), "dune test") {
+			t.Errorf("GET %s: %q", published.URL, b)
+		}
+	}
+	stopPub()
+
 	var base, d1 store.Snapshot
 	timed("pin (auto: full)", func() { base, err = m.Pin(ctx, parent.ID, "") })
 	if err != nil || base.Kind != store.SnapFull {
@@ -219,6 +295,7 @@ func TestLifecycle(t *testing.T) {
 			t.Errorf("fork %s: uuid %s repeats across forks (RNG not reseeded)", f.ID, u)
 		}
 		uuids[u] = true
+		checkServer(f.ID) // the server was in the snapshot, so it runs in every fork
 		ts, _ := exec(f.ID, "", "date", "+%s")
 		if sec, _ := strconv.ParseInt(ts, 10, 64); time.Since(time.Unix(sec, 0)).Abs() > 5*time.Second {
 			t.Errorf("fork %s clock %s, host %d", f.ID, ts, time.Now().Unix())

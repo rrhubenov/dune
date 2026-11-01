@@ -1,7 +1,7 @@
 "use strict";
 
 // State fetched from the API; re-fetched per collection on change events.
-const state = { vms: [], snapshots: [], images: [], host: null };
+const state = { vms: [], snapshots: [], images: [], host: null, ports: [] };
 
 // --- API ---------------------------------------------------------------
 
@@ -22,6 +22,7 @@ const loaders = {
   vms: async () => { state.vms = await api("GET", "/v1/vms"); renderVMs(); renderTree(); },
   snapshots: async () => { state.snapshots = await api("GET", "/v1/snapshots"); renderVMs(); renderTree(); },
   images: async () => { state.images = await api("GET", "/v1/images"); renderImages(); },
+  ports: async () => { const ps = await api("GET", "/v1/ports"); announcePorts(ps); state.ports = ps; renderVMs(); },
   // Host stats change continuously; they are also polled (see Start).
   storage: async () => { state.host = await api("GET", "/v1/host"); renderHost(); renderVMs(); },
 };
@@ -51,7 +52,7 @@ function connectEvents(delay = 500) {
   ws.onopen = () => {
     dot.classList.add("live");
     delay = 500;
-    refresh("vms", "snapshots", "images", "storage"); // catch up on anything missed
+    refresh("vms", "snapshots", "images", "storage", "ports"); // catch up on anything missed
   };
   ws.onmessage = (m) => refresh(JSON.parse(m.data).topic);
   ws.onclose = () => {
@@ -127,10 +128,17 @@ function renderVMs() {
     if (!kids.has(p)) kids.set(p, []);
     kids.get(p).push(vm);
   }
+  const portsByVM = new Map();
+  for (const p of state.ports) {
+    if (!portsByVM.has(p.vm_id)) portsByVM.set(p.vm_id, []);
+    portsByVM.get(p.vm_id).push(p);
+  }
   const rows = [];
   const walk = (parent, depth) => {
     for (const vm of kids.get(parent) || []) {
-      rows.push(row(vm, depth));
+      const ports = portsByVM.get(vm.id) || [];
+      rows.push(row(vm, depth, ports.length > 0));
+      if (ports.length) rows.push(portsRow(ports, depth));
       walk(vm.id, depth + 1);
     }
   };
@@ -150,10 +158,10 @@ function renderVMs() {
     return used ? `${human(used)} <span class="muted">/ ${vm.mem_mib}M</span>` : `<span class="muted">${vm.mem_mib}M</span>`;
   }
 
-  function row(vm, depth) {
+  function row(vm, depth, hasPorts) {
     const running = vm.state === "running", paused = vm.state === "paused";
     const indent = depth ? `<span class="branch" style="padding-left:${(depth - 1) * 18}px">↳ </span>` : "";
-    return `<tr data-id="${esc(vm.id)}">
+    return `<tr data-id="${esc(vm.id)}"${hasPorts ? ` class="has-ports"` : ""}>
       <td class="id">${indent}${esc(vm.id)}</td>
       <td><span class="state ${esc(vm.state)}">${esc(vm.state)}</span></td>
       <td class="lineage">${lineage(vm)}</td>
@@ -169,6 +177,37 @@ function renderVMs() {
       </td>
     </tr>`;
   }
+}
+
+// portsRow lists a VM's listening ports under its row. HTTP ports published
+// on the tailnet link to their URL; others show their tailnet address.
+function portsRow(ports, depth) {
+  const chips = ports.map((p) => {
+    const project = p.cwd && !["/", "/root"].includes(p.cwd) ? p.cwd.split("/").filter(Boolean).pop() : "";
+    const tip = [p.cmdline, p.cwd && `in ${p.cwd}`, `listening on ${p.bind}:${p.port}`, p.addr && `published at ${p.addr}`]
+      .filter(Boolean).join("\n");
+    const name = `<span class="port-num">:${p.port}</span> <b>${esc(p.label || p.process || "?")}</b>`;
+    const extra = p.title || project;
+    if (p.url) {
+      return `<a class="port http" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer" title="${esc(tip)}">${name}${extra ? ` <span class="muted">${esc(extra)}</span>` : ""} ↗</a>`;
+    }
+    const where = p.addr ? p.addr : p.probed ? "" : "…";
+    return `<span class="port" title="${esc(tip)}">${name}${extra ? ` <span class="muted">${esc(extra)}</span>` : ""}${where ? ` <span class="muted mono">${esc(where)}</span>` : ""}</span>`;
+  }).join("");
+  return `<tr class="ports"><td colspan="7"><div class="port-list" style="padding-left:${depth * 18}px">${chips}</div></td></tr>`;
+}
+
+// announcePorts toasts ports that appeared since the last load (not on the
+// first load: those were already there).
+let knownPorts = null;
+function announcePorts(ps) {
+  const keys = new Set(ps.map((p) => `${p.vm_id}:${p.port}`));
+  if (knownPorts) {
+    for (const p of ps) {
+      if (!knownPorts.has(`${p.vm_id}:${p.port}`)) toast(`${p.vm_id}: port ${p.port} (${p.label || p.process || "?"}) is listening`);
+    }
+  }
+  knownPorts = keys;
 }
 
 function renderTree() {
@@ -336,7 +375,7 @@ window.addEventListener("resize", () => fit && fit.fit());
 // --- Start -------------------------------------------------------------------
 
 // Load everything now; don't depend on the live-update socket for data.
-refresh("vms", "snapshots", "images", "storage");
+refresh("vms", "snapshots", "images", "storage", "ports");
 connectEvents();
 setInterval(() => { renderVMs(); renderTree(); }, 30000); // keep ages fresh
 setInterval(() => refresh("storage"), 5000); // host memory/disk

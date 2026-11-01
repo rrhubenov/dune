@@ -44,10 +44,12 @@ type Server struct {
 	VMs     *vm.Manager
 	Storage *storage.Store
 	// Host, if set, reports host memory/disk; ids are the current VMs.
-	Host func(ids []string) (model.HostStats, error)
+	Host    func(ids []string) (model.HostStats, error)
 	Console Console      // optional
 	Events  *events.Hub  // optional; enables /v1/events
 	UI      http.Handler // optional; served at /
+	// Ports, if set, lists ports noticed in VMs (of one VM if vmID is set).
+	Ports func(vmID string) []model.Port
 }
 
 func (s *Server) Handler() http.Handler {
@@ -72,6 +74,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/snapshots/{id}/fork", s.forkSnapshot)
 	mux.HandleFunc("GET /v1/events", s.events)
 	mux.HandleFunc("GET /v1/vms/{id}/terminal", s.terminal)
+	mux.HandleFunc("GET /v1/ports", s.listPorts)
+	mux.HandleFunc("GET /v1/vms/{id}/ports", s.listPorts)
 	if s.UI != nil {
 		mux.Handle("GET /", s.UI)
 	}
@@ -197,6 +201,21 @@ func (s *Server) execVM(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.VMs.Exec(r.Context(), r.PathValue("id"), req)
 	reply(w, res, err)
+}
+
+func (s *Server) listPorts(w http.ResponseWriter, r *http.Request) {
+	if s.Ports == nil {
+		writeJSON(w, http.StatusNotImplemented, Error{Error: "port detection unavailable"})
+		return
+	}
+	id := r.PathValue("id")
+	if id != "" {
+		if _, err := s.VMs.Get(id); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, s.Ports(id))
 }
 
 func (s *Server) listSnapshots(w http.ResponseWriter, r *http.Request) {

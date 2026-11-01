@@ -11,6 +11,7 @@ const (
 	Snapshots = "snapshots"
 	Storage   = "storage"
 	Images    = "images"
+	Ports     = "ports"
 )
 
 type Event struct {

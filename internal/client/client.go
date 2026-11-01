@@ -177,6 +177,16 @@ func (c *Client) Fork(snapID string, count int) ([]model.VM, error) {
 	return resp.VMs, err
 }
 
+// Ports lists ports listening in VMs, of one VM if id is set.
+func (c *Client) Ports(id string) ([]model.Port, error) {
+	path := "/v1/ports"
+	if id != "" {
+		path = "/v1/vms/" + url.PathEscape(id) + "/ports"
+	}
+	var ps []model.Port
+	return ps, c.do("GET", path, nil, &ps)
+}
+
 // Exec runs a command in the VM through its guest agent.
 func (c *Client) Exec(id string, req model.ExecRequest) (model.ExecResult, error) {
 	var r model.ExecResult

@@ -370,6 +370,33 @@ func (m *Manager) Exec(ctx context.Context, id string, req agent.ExecRequest) (a
 	return res, nil
 }
 
+// ListenPorts lists the TCP ports listening in a running VM.
+func (m *Manager) ListenPorts(ctx context.Context, id string) ([]agent.ListenPort, error) {
+	if err := m.running(id); err != nil {
+		return nil, err
+	}
+	return m.agent(id).Ports(ctx)
+}
+
+// DialPort opens a stream to a TCP port on a running VM's loopback.
+func (m *Manager) DialPort(ctx context.Context, id string, port int) (net.Conn, error) {
+	if err := m.running(id); err != nil {
+		return nil, err
+	}
+	return m.agent(id).DialTCP(ctx, port)
+}
+
+func (m *Manager) running(id string) error {
+	vm, err := m.cfg.DB.GetVM(id)
+	if err != nil {
+		return err
+	}
+	if vm.State != store.VMRunning {
+		return fmt.Errorf("vm %s is %s: %w", id, vm.State, ErrState)
+	}
+	return nil
+}
+
 func (m *Manager) Delete(ctx context.Context, id string) error {
 	defer m.lock(id)()
 	vm, err := m.cfg.DB.GetVM(id)

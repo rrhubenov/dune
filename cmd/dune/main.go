@@ -34,6 +34,7 @@ VMs:
   console ID [--tail BYTES]                   print serial console output
   exec [--sh] [--timeout S] ID CMD [ARGS...]  run a command via the guest agent
   shell ID                                    interactive login shell
+  ports [ID]                                  ports listening in VMs, with their tailnet address
 
 Snapshots:
   snap ls                                     snapshot tree, with VMs forked from each
@@ -98,6 +99,8 @@ func dispatch(c *client.Client, cmd string, args []string) error {
 		return cmdExec(c, args)
 	case "shell", "sh":
 		return cmdShell(c, args)
+	case "ports":
+		return cmdPorts(c, args)
 	case "snap", "snaps":
 		sub := "ls"
 		if len(args) > 0 {
@@ -312,6 +315,30 @@ func cmdExec(c *client.Client, args []string) error {
 		os.Exit(res.ExitCode)
 	}
 	return nil
+}
+
+func cmdPorts(c *client.Client, args []string) error {
+	if len(args) > 1 {
+		return errors.New("usage: dune ports [ID]")
+	}
+	var id string
+	if len(args) == 1 {
+		id = args[0]
+	}
+	ps, err := c.Ports(id)
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "VM\tPORT\tPROGRAM\tDIR\tOPEN\tTITLE")
+	for _, p := range ps {
+		open := p.URL
+		if open == "" {
+			open = p.Addr
+		}
+		fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\n", p.VMID, p.Port, dash(p.Label), dash(p.Cwd), dash(open), p.Title)
+	}
+	return w.Flush()
 }
 
 // cmdSnapLs prints the snapshot forest: each snapshot under its parent, and

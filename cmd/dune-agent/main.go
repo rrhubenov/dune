@@ -1,8 +1,9 @@
 //go:build linux
 
 // dune-agent runs inside dune guests. It serves the agent protocol (see
-// internal/agent) over vsock: run commands, and fix up a guest restored from
-// a snapshot (clock, entropy, hostname).
+// internal/agent) over vsock: run commands, open terminals, list listening
+// TCP ports and tunnel to them, and fix up a guest restored from a snapshot
+// (clock, entropy, hostname).
 //
 // Its listening socket is part of the guest's memory, so it survives
 // snapshot/restore: every fork has a working agent the moment it resumes.
@@ -31,7 +32,7 @@ import (
 )
 
 const (
-	version        = "1"
+	version        = "2"
 	maxOutput      = 16 << 20
 	maxRequest     = 32 << 20
 	defaultTimeout = 60 * time.Second
@@ -52,6 +53,8 @@ func main() {
 	mux.HandleFunc("POST /exec", handleExec)
 	mux.HandleFunc("POST /fixup", handleFixup)
 	mux.HandleFunc("GET /pty", handlePTY)
+	mux.HandleFunc("GET /ports", handlePorts)
+	mux.HandleFunc("GET /tcp", handleTCP)
 	log.Fatal((&http.Server{Handler: mux}).Serve(ln))
 }
 
