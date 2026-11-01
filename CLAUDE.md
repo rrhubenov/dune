@@ -4,7 +4,7 @@ Daemon (`duned`) + CLI (`dune`) that runs Firecracker microVMs on one Linux host
 ("midas") and can pin (snapshot) and fork them in milliseconds. Forks share disk
 blocks (XFS reflink) and memory pages (snapshot file mapped `MAP_PRIVATE`).
 
-- Design explainer: `docs/how-dune-works.html` (KVM, Firecracker, isolation, storage,
+- Roadmap: `docs/roadmap.md`. Design explainer: `docs/how-dune-works.html` (KVM, Firecracker, isolation, storage,
   CoW, snapshots, forks, networking). Spike measurements: `docs/spike.md`.
 - Go 1.26, module `github.com/rrhubenov/dune`. Deps: modernc sqlite, coder/websocket,
   x/sys. No cgo.
@@ -97,4 +97,5 @@ UI changes: check headlessly with playwright-core and the cached
 - Short replies, low-latency back-and-forth. Root steps: exact commands, one at a time,
   then wait for output.
 - Commit and push only when asked.
-- UI/UX redesign is parked; targeted UI fixes are fine.
+- Work follows `docs/roadmap.md`: milestones one at a time, in order. The web UI is becoming
+  the full control plane (M1 onward).
