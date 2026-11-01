@@ -1,0 +1,1323 @@
+<title>How dune works</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a field manual. Sticky chapter rail on the left, one reading column,
+   figures as drawn plates. Color encodes where code runs: guest, host userspace,
+   host kernel, storage. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #18202a;
+  --muted: #586473;
+  --line: #d3dae2;
+  --accent: #1d5fd1;
+  --guest: #7446c4;
+  --host: #0b7a69;
+  --kernel: #a8620a;
+  --store: #2f6f9f;
+  --bad: #b3261e;
+  --code-bg: #eaeef3;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --surface: #161c23; --ink: #e4e9ef; --muted: #98a4b2; --line: #2a333e;
+    --accent: #6fa3ff; --guest: #b393f2; --host: #4cc4b0; --kernel: #eea445; --store: #6db3e6;
+    --bad: #ef6a5f; --code-bg: #1d242d; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --surface: #161c23; --ink: #e4e9ef; --muted: #98a4b2; --line: #2a333e;
+  --accent: #6fa3ff; --guest: #b393f2; --host: #4cc4b0; --kernel: #eea445; --store: #6db3e6;
+  --bad: #ef6a5f; --code-bg: #1d242d; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 17px/1.62 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.shell { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 48px; max-width: 1180px; margin: 0 auto; padding-block: 40px 96px; }
+@media (max-width: 1000px) { .shell { grid-template-columns: minmax(0, 1fr); gap: 0; padding-block: 24px 64px; } }
+
+nav.rail { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-family: var(--display); font-size: 14px; max-height: calc(100vh - 48px); overflow: auto; }
+nav.rail .brand { font-weight: 800; font-size: 15px; letter-spacing: 0.02em; margin-bottom: 14px; }
+nav.rail ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; counter-reset: ch; }
+nav.rail li { counter-increment: ch; }
+nav.rail a { display: grid; grid-template-columns: 24px 1fr; padding: 4px 8px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.rail a::before { content: counter(ch); font-variant-numeric: tabular-nums; color: var(--line); font-weight: 700; }
+nav.rail a:hover, nav.rail a.on { color: var(--ink); background: var(--surface); }
+nav.rail a.on::before { color: var(--accent); }
+@media (max-width: 1000px) {
+  nav.rail { position: static; max-height: none; margin-bottom: 28px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+  nav.rail ol { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+}
+
+main { min-width: 0; max-width: 780px; }
+header.hero { margin-bottom: 48px; }
+.eyebrow { font-family: var(--display); font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
+h1 { font-family: var(--display); font-stretch: 85%; font-weight: 800; font-size: clamp(38px, 6vw, 58px); line-height: 1.02; margin: 10px 0 18px; letter-spacing: -0.01em; text-wrap: balance; }
+.lede { font-size: 20px; line-height: 1.55; color: var(--muted); margin: 0; max-width: 64ch; }
+h2 { font-family: var(--display); font-stretch: 88%; font-weight: 800; font-size: 32px; line-height: 1.1; margin: 0 0 6px; text-wrap: balance; }
+.ch-num { font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+h3 { font-family: var(--display); font-weight: 700; font-size: 20px; margin: 36px 0 8px; text-wrap: balance; }
+section.chapter { padding-top: 56px; margin-top: 56px; border-top: 1px solid var(--line); scroll-margin-top: 16px; }
+section.chapter:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+p { margin: 0 0 16px; max-width: 68ch; }
+ul, ol.steps { margin: 0 0 18px; padding-left: 22px; max-width: 66ch; }
+li { margin-bottom: 6px; }
+a { color: var(--accent); }
+strong { font-weight: 650; }
+code { font-family: var(--mono); font-size: 0.84em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+pre { font-family: var(--mono); font-size: 13.5px; line-height: 1.55; background: var(--code-bg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; margin: 0 0 18px; }
+pre code { background: none; padding: 0; font-size: inherit; overflow-wrap: normal; }
+.key { font-size: 18px; border-left: 3px solid var(--accent); padding: 4px 0 4px 18px; margin: 22px 0; max-width: 64ch; }
+
+ol.steps { counter-reset: st; list-style: none; padding-left: 0; }
+ol.steps > li { counter-increment: st; display: grid; grid-template-columns: 34px minmax(0, 1fr); margin-bottom: 10px; }
+ol.steps > li::before { content: counter(st); font-family: var(--display); font-weight: 700; font-size: 14px; color: var(--accent); padding-top: 3px; font-variant-numeric: tabular-nums; }
+
+.lab { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px 4px; margin: 26px 0; }
+.lab-head { font-family: var(--display); font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--host); margin-bottom: 8px; }
+.lab pre { background: var(--code-bg); }
+.lab p { font-size: 15.5px; }
+
+table { border-collapse: collapse; width: 100%; font-size: 15px; margin: 0 0 20px; }
+.tbl { overflow-x: auto; margin: 0 0 8px; }
+th { font-family: var(--display); font-weight: 700; font-size: 12.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+
+figure { margin: 28px 0 30px; }
+.plate { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; overflow-x: auto; }
+.plate svg { display: block; width: 100%; height: auto; min-width: 620px; font-family: var(--display); }
+figcaption { font-size: 14.5px; color: var(--muted); margin-top: 10px; max-width: 68ch; }
+figcaption b { color: var(--ink); font-weight: 650; }
+
+/* SVG drawing classes */
+svg text { fill: currentColor; font-size: 13px; }
+svg .sm { font-size: 11.5px; }
+svg .xs { font-size: 10.5px; }
+svg .b { font-weight: 700; }
+svg .mono { font-family: var(--mono); font-size: 11px; }
+svg .mut { fill: var(--muted); }
+svg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.3; }
+svg .boxi { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; }
+svg .ln { stroke: currentColor; stroke-width: 1.3; fill: none; }
+svg .lnm { stroke: var(--muted); stroke-width: 1.2; fill: none; }
+svg .dash { stroke-dasharray: 5 4; }
+svg .ac { fill: var(--accent); }
+svg .acs { stroke: var(--accent); }
+svg .g-s { stroke: var(--guest); } svg .g-f { fill: var(--guest); }
+svg .h-s { stroke: var(--host); } svg .h-f { fill: var(--host); }
+svg .k-s { stroke: var(--kernel); } svg .k-f { fill: var(--kernel); }
+svg .s-s { stroke: var(--store); } svg .s-f { fill: var(--store); }
+svg .bad-s { stroke: var(--bad); } svg .bad-f { fill: var(--bad); }
+svg .tint-g { fill: color-mix(in srgb, var(--guest) 12%, var(--surface)); }
+svg .tint-h { fill: color-mix(in srgb, var(--host) 10%, var(--surface)); }
+svg .tint-k { fill: color-mix(in srgb, var(--kernel) 12%, var(--surface)); }
+svg .tint-s { fill: color-mix(in srgb, var(--store) 12%, var(--surface)); }
+svg .tint-a { fill: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+svg .arrowhead { fill: currentColor; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-family: var(--display); font-size: 13px; color: var(--muted); margin: 0 0 18px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.sw-g { background: var(--guest); } .sw-h { background: var(--host); } .sw-k { background: var(--kernel); } .sw-s { background: var(--store); }
+
+dl.gloss { display: grid; grid-template-columns: minmax(120px, 190px) minmax(0, 1fr); gap: 10px 20px; margin: 0; }
+dl.gloss dt { font-family: var(--mono); font-size: 14px; font-weight: 600; }
+dl.gloss dd { margin: 0; font-size: 15.5px; }
+@media (max-width: 600px) { dl.gloss { grid-template-columns: minmax(0, 1fr); gap: 2px; } dl.gloss dd { margin-bottom: 12px; } }
+
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="shell">
+<nav class="rail" aria-label="Chapters">
+  <div class="brand">How dune works</div>
+  <ol>
+    <li><a href="#picture">The whole picture</a></li>
+    <li><a href="#virt">How virtualization works</a></li>
+    <li><a href="#kvm">KVM: the kernel half</a></li>
+    <li><a href="#firecracker">Inside Firecracker</a></li>
+    <li><a href="#isolation">Isolation and the jail</a></li>
+    <li><a href="#storage">Storage: loop, XFS, sparse</a></li>
+    <li><a href="#cow">Copy-on-write, three ways</a></li>
+    <li><a href="#snapshots">Snapshots: pin</a></li>
+    <li><a href="#forks">Forks</a></li>
+    <li><a href="#network">Networking</a></li>
+    <li><a href="#vsock">vsock and the agent</a></li>
+    <li><a href="#lifecycle">Processes, systemd, the API</a></li>
+    <li><a href="#limits">What is not isolated</a></li>
+    <li><a href="#glossary">Glossary</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="eyebrow">dune on midas · Firecracker v1.17 · Linux 6.12</div>
+  <h1>How dune works, from the CPU up</h1>
+  <p class="lede">A reading guide from how a CPU runs a virtual machine up to every Linux mechanism dune leans on: KVM, Firecracker's internals, the jailer's chroot and namespaces, the loop-mounted XFS store, reflinks, memory mapped copy-on-write, diff snapshots, and the two layers of NAT behind each VM. Every claim points at the code that does it and a command you can run on midas to see it.</p>
+</header>
+
+<!-- ============================================================ 1 -->
+<section class="chapter" id="picture">
+<div class="ch-num">Chapter 1</div>
+<h2>The whole picture</h2>
+<p>dune turns one Linux box into a VM host whose VMs can be frozen and cloned in milliseconds. Three ideas carry the whole design:</p>
+<ul>
+  <li><strong>A VM is a process.</strong> Each VM is one Firecracker process. Its guest RAM is ordinary memory in that process, and the CPU runs guest code through KVM. Everything Linux can do to a process (chroot it, change its uid, put it in a namespace or a cgroup) dune does to the VM.</li>
+  <li><strong>A snapshot is three files.</strong> CPU and device state (<code>vmstate</code>), RAM (<code>mem</code>), and the disk (<code>disk.ext4</code>). Restoring those files in a fresh process gives you a VM that resumes mid-instruction.</li>
+  <li><strong>Forking is cheap because nothing is copied.</strong> Disks are cloned by XFS reflink (shared blocks on disk), and RAM is mapped copy-on-write from the snapshot file (shared pages in the host's page cache). Each fork only pays for what it changes.</li>
+</ul>
+<div class="legend">
+  <span><i class="sw-g"></i>runs inside a guest</span>
+  <span><i class="sw-h"></i>host userspace</span>
+  <span><i class="sw-k"></i>host kernel</span>
+  <span><i class="sw-s"></i>storage</span>
+</div>
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 560" role="img" aria-label="Your Mac talks to duned over Tailscale. duned launches each VM through systemd-run and the jailer into its own cgroup scope, network namespace and chroot, where an unprivileged Firecracker process runs the guest on KVM. All files live on a loop-mounted XFS store.">
+  <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <!-- Mac -->
+  <rect x="20" y="20" width="200" height="62" rx="8" class="box"/>
+  <text x="36" y="45" class="b">Your Mac</text>
+  <text x="36" y="66" class="sm mut">dune CLI · browser UI</text>
+  <line x1="220" y1="51" x2="318" y2="51" class="ln" marker-end="url(#a1)"/>
+  <text x="228" y="40" class="xs mut">HTTP to :7070</text>
+  <text x="228" y="72" class="xs mut">over Tailscale</text>
+  <!-- duned -->
+  <rect x="322" y="14" width="400" height="76" rx="8" class="tint-h h-s" stroke-width="1.6"/>
+  <text x="338" y="38" class="b">duned  (root, duned.service)</text>
+  <text x="338" y="58" class="sm mut">API on 100.97.247.80:7070 + /run/dune/duned.sock</text>
+  <text x="338" y="76" class="sm mut">state in dune.db · builds netns, iptables, jails</text>
+  <line x1="470" y1="90" x2="470" y2="128" class="ln" marker-end="url(#a1)"/>
+  <text x="478" y="114" class="xs mut">systemd-run --scope → jailer → exec firecracker</text>
+  <!-- VM column boxes -->
+  <g>
+    <rect x="20" y="132" width="860" height="250" rx="10" class="boxi dash" fill="none"/>
+    <text x="34" y="152" class="sm mut">one per VM, three shown: an original and two forks</text>
+  </g>
+  <g>
+    <rect x="34" y="164" width="268" height="206" rx="8" class="box h-s dash"/>
+    <text x="46" y="182" class="xs mut">cgroup: dune-vm-&lt;id&gt;.scope</text>
+    <rect x="44" y="190" width="248" height="170" rx="7" class="box"/>
+    <text x="56" y="207" class="xs mut">netns dune-&lt;id&gt; · tap0, veth0</text>
+    <rect x="54" y="214" width="228" height="136" rx="6" class="box"/>
+    <text x="66" y="231" class="xs mut">chroot jail · uid 100000+slot</text>
+    <rect x="64" y="238" width="208" height="102" rx="6" class="tint-h"/>
+    <text x="76" y="256" class="sm b">firecracker</text>
+    <text x="160" y="256" class="xs mut">seccomp-filtered</text>
+    <rect x="76" y="266" width="184" height="64" rx="6" class="tint-g g-s"/>
+    <text x="88" y="285" class="sm b">guest</text>
+    <text x="88" y="302" class="xs">Linux 6.1 · systemd</text>
+    <text x="88" y="318" class="xs">dune-agent on vsock :1024</text>
+  </g>
+  <g transform="translate(292,0)">
+    <rect x="34" y="164" width="268" height="206" rx="8" class="box h-s dash"/>
+    <text x="46" y="182" class="xs mut">cgroup: dune-vm-&lt;id&gt;.scope</text>
+    <rect x="44" y="190" width="248" height="170" rx="7" class="box"/>
+    <text x="56" y="207" class="xs mut">netns dune-&lt;id&gt; · tap0, veth0</text>
+    <rect x="54" y="214" width="228" height="136" rx="6" class="box"/>
+    <text x="66" y="231" class="xs mut">chroot jail · uid 100000+slot</text>
+    <rect x="64" y="238" width="208" height="102" rx="6" class="tint-h"/>
+    <text x="76" y="256" class="sm b">firecracker</text>
+    <text x="160" y="256" class="xs mut">seccomp-filtered</text>
+    <rect x="76" y="266" width="184" height="64" rx="6" class="tint-g g-s"/>
+    <text x="88" y="285" class="sm b">guest</text>
+    <text x="88" y="302" class="xs">Linux 6.1 · systemd</text>
+    <text x="88" y="318" class="xs">dune-agent on vsock :1024</text>
+  </g>
+  <g transform="translate(584,0)">
+    <rect x="34" y="164" width="268" height="206" rx="8" class="box h-s dash"/>
+    <text x="46" y="182" class="xs mut">cgroup: dune-vm-&lt;id&gt;.scope</text>
+    <rect x="44" y="190" width="248" height="170" rx="7" class="box"/>
+    <text x="56" y="207" class="xs mut">netns dune-&lt;id&gt; · tap0, veth0</text>
+    <rect x="54" y="214" width="228" height="136" rx="6" class="box"/>
+    <text x="66" y="231" class="xs mut">chroot jail · uid 100000+slot</text>
+    <rect x="64" y="238" width="208" height="102" rx="6" class="tint-h"/>
+    <text x="76" y="256" class="sm b">firecracker</text>
+    <text x="160" y="256" class="xs mut">seccomp-filtered</text>
+    <rect x="76" y="266" width="184" height="64" rx="6" class="tint-g g-s"/>
+    <text x="88" y="285" class="sm b">guest</text>
+    <text x="88" y="302" class="xs">Linux 6.1 · systemd</text>
+    <text x="88" y="318" class="xs">dune-agent on vsock :1024</text>
+  </g>
+  <!-- kernel bar -->
+  <rect x="20" y="404" width="860" height="64" rx="8" class="tint-k k-s"/>
+  <text x="36" y="428" class="b">Host Linux kernel 6.12</text>
+  <text x="36" y="452" class="sm">KVM (kvm_amd) · namespaces · cgroup v2 · netfilter NAT · tun · veth · loop · XFS reflink · page cache</text>
+  <line x1="168" y1="370" x2="168" y2="402" class="ln" marker-end="url(#a1)"/>
+  <line x1="460" y1="370" x2="460" y2="402" class="ln" marker-end="url(#a1)"/>
+  <line x1="752" y1="370" x2="752" y2="402" class="ln" marker-end="url(#a1)"/>
+  <text x="176" y="392" class="xs mut">ioctl(/dev/kvm)</text>
+  <!-- storage -->
+  <rect x="20" y="486" width="560" height="58" rx="8" class="tint-s s-s"/>
+  <text x="36" y="509" class="b">Store: /srv/dune/store</text>
+  <text x="36" y="530" class="sm">XFS (reflink) on /dev/loop1 ← sparse file /srv/dune/store.img</text>
+  <rect x="596" y="486" width="284" height="58" rx="8" class="box"/>
+  <text x="612" y="509" class="b">CPU</text>
+  <text x="612" y="530" class="sm">AMD-V (svm), nested paging</text>
+</svg>
+</div>
+<figcaption><b>Each VM is wrapped in four Linux containment layers</b> (cgroup scope, network namespace, chroot with its own uid, seccomp) around a Firecracker process that runs the guest with KVM. duned, running as root, builds those layers and then talks to each VM over two unix sockets inside its jail: Firecracker's API and the vsock bridge to the guest agent.</figcaption>
+</figure>
+<p>The code splits the same way. <code>internal/vm</code> (the Manager) is the orchestration: it decides what happens. <code>internal/backend/firecracker</code> knows how to run Firecracker. <code>internal/netns</code> builds networking, <code>internal/storage</code> owns the store, <code>internal/store</code> is the SQLite state, and <code>cmd/dune-agent</code> is the small program inside every guest.</p>
+<p>Read the chapters in order the first time. Chapters 2 to 4 build up how a VM actually runs: what the CPU does, what KVM does, and what Firecracker does. That foundation is what makes chapters 7 to 9 (copy-on-write, snapshots, forks) make sense.</p>
+</section>
+
+<!-- ============================================================ 2 -->
+<section class="chapter" id="virt">
+<div class="ch-num">Chapter 2</div>
+<h2>How virtualization works</h2>
+<h3>The problem a hypervisor solves</h3>
+<p>An operating system kernel is written as if it owns the machine. It runs in the CPU's most privileged mode (ring 0 on x86). It points the CPU at its own page tables by writing the <code>CR3</code> register, turns interrupts on and off, programs timers, and drives devices by reading and writing I/O ports and memory-mapped registers. Put two kernels on one CPU and they would overwrite each other's page tables in the first microsecond.</p>
+<p>A hypervisor's job is to let several kernels each <em>believe</em> they own the machine while the real control stays with the host. Every technique below is an answer to one question: what happens when the guest kernel executes an instruction that only the owner of the machine should execute?</p>
+
+<h3>Four answers, in historical order</h3>
+<div class="tbl"><table>
+<tr><th>Approach</th><th>How</th><th>Trade-off</th></tr>
+<tr><td><strong>Emulation</strong></td><td>Interpret or JIT-translate every guest instruction in software (QEMU's TCG mode).</td><td>Runs anything, even another CPU architecture. Many times slower.</td></tr>
+<tr><td><strong>Trap and emulate</strong></td><td>Run the guest kernel with reduced privilege. Each privileged instruction faults ("traps") into the hypervisor, which emulates its effect on the guest's virtual state and continues.</td><td>Native speed for ordinary code. Popek and Goldberg proved in 1974 that it works if every <em>sensitive</em> instruction is also <em>privileged</em>. On 1990s x86 that was false: <code>POPF</code> run without privilege silently ignores the interrupt flag instead of trapping, and <code>SGDT</code> reveals the real descriptor tables. A guest could never be fooled completely.</td></tr>
+<tr><td><strong>Binary translation</strong>, <strong>paravirtualization</strong></td><td>VMware (1999) rewrote guest kernel code on the fly to replace the problem instructions. Xen (2003) modified the guest kernel to call the hypervisor directly (<em>hypercalls</em>) instead.</td><td>Fast, but complex (VMware) or requiring a changed guest (Xen).</td></tr>
+<tr><td><strong>Hardware assistance</strong></td><td>Intel VT-x (2005) and AMD-V (2006) added a separate guest mode in which every sensitive operation can be made to exit. Nested page tables followed around 2008.</td><td>Unmodified guests at near-native speed. This is what KVM, and so Firecracker and dune, use.</td></tr>
+</table></div>
+
+<h3>Host mode and guest mode</h3>
+<p>Hardware virtualization doesn't remove the rings; it doubles them. The CPU is in either <em>host</em> mode (AMD) / <em>root</em> mode (Intel) or <em>guest</em> / <em>non-root</em> mode, and each has its own ring 0 and ring 3. The guest kernel really runs in ring 0, so it can load page tables and disable interrupts, but those actions affect only the guest's virtual state, or cause an exit if the hypervisor asked for one.</p>
+<p>On AMD the hypervisor describes a guest with a <strong>VMCB</strong> (virtual machine control block): a page holding the guest's register state plus <em>intercept</em> bits that say which events must leave guest mode. It executes <code>VMRUN</code>; the CPU saves the host state, loads the guest state and runs guest code. When an intercepted event happens, the CPU saves the guest state back into the VMCB, writes an exit code, and continues in the host right after <code>VMRUN</code>. That transition is a <strong>VM exit</strong> (<code>#VMEXIT</code>). Intel's equivalents are the VMCS, <code>VMLAUNCH</code>/<code>VMRESUME</code> and "VM exit".</p>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 340" role="img" aria-label="Host mode and guest mode each have ring 3 and ring 0. Firecracker in host ring 3 calls KVM_RUN into KVM in host ring 0, which executes VMRUN to enter the guest kernel in guest ring 0. Guest system calls stay inside guest mode. Intercepted events cause a VM exit back to KVM, which returns to Firecracker only when the exit needs device emulation.">
+  <defs><marker id="b1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <text x="220" y="30" class="b" text-anchor="middle">host mode</text>
+  <text x="680" y="30" class="b" text-anchor="middle">guest mode</text>
+  <text x="20" y="95" class="sm mut">ring 3</text>
+  <text x="20" y="225" class="sm mut">ring 0</text>
+  <line x1="450" y1="44" x2="450" y2="300" class="lnm dash"/>
+  <rect x="80" y="60" width="300" height="64" rx="8" class="tint-h h-s"/>
+  <text x="96" y="86" class="b">firecracker (the VMM)</text><text x="96" y="106" class="xs mut">devices, API, snapshots</text>
+  <rect x="80" y="190" width="300" height="70" rx="8" class="tint-k k-s"/>
+  <text x="96" y="216" class="b">Linux kernel + KVM</text><text x="96" y="236" class="xs mut">owns the real page tables and interrupts</text>
+  <rect x="520" y="60" width="320" height="64" rx="8" class="tint-g g-s"/>
+  <text x="536" y="86" class="b">guest processes</text><text x="536" y="106" class="xs mut">systemd, sshd, your workload</text>
+  <rect x="520" y="190" width="320" height="70" rx="8" class="tint-g g-s"/>
+  <text x="536" y="216" class="b">guest Linux kernel</text><text x="536" y="236" class="xs mut">believes it owns the machine</text>
+  <line x1="200" y1="124" x2="200" y2="186" class="ln" marker-end="url(#b1)"/>
+  <text x="208" y="160" class="xs">ioctl KVM_RUN</text>
+  <line x1="290" y1="186" x2="290" y2="128" class="ln dash" marker-end="url(#b1)"/>
+  <text x="298" y="152" class="xs">returns: exit needs</text><text x="298" y="166" class="xs">device emulation</text>
+  <line x1="380" y1="208" x2="516" y2="208" class="ln" marker-end="url(#b1)"/>
+  <text x="448" y="200" class="xs" text-anchor="middle">VMRUN</text>
+  <line x1="516" y1="244" x2="384" y2="244" class="ln acs" stroke-width="1.8" marker-end="url(#b1)"/>
+  <text x="448" y="262" class="xs" text-anchor="middle">#VMEXIT</text>
+  <line x1="640" y1="124" x2="640" y2="186" class="ln" marker-end="url(#b1)"/>
+  <line x1="720" y1="186" x2="720" y2="128" class="ln" marker-end="url(#b1)"/>
+  <text x="728" y="152" class="xs">syscalls, page faults:</text><text x="728" y="166" class="xs">no exit</text>
+  <rect x="300" y="282" width="300" height="44" rx="6" class="box"/>
+  <text x="314" y="301" class="xs b">VMCB (one per vCPU)</text>
+  <text x="314" y="317" class="xs">guest registers · intercept bits · exit code</text>
+</svg>
+</div>
+<figcaption><b>Most guest activity never leaves guest mode.</b> System calls, guest page faults and context switches inside the guest are handled by the guest kernel on the real CPU. Only events the hypervisor intercepts cause a VM exit, and only some of those travel all the way up to the VMM in userspace.</figcaption>
+</figure>
+<p>Exits are the cost of virtualization. A round trip into KVM and back takes on the order of a microsecond; one that continues up to the VMM in userspace costs several times that. Much of the engineering in KVM, virtio and Firecracker is about avoiding exits, or keeping them inside the kernel.</p>
+
+<h3>Memory: two layers of page tables</h3>
+<p>The guest kernel builds normal page tables mapping its processes' virtual addresses to what it thinks are physical addresses. Those are <em>guest-physical</em> addresses: offsets into the RAM the VMM gave it. Before nested paging, hypervisors kept <em>shadow page tables</em>, a combined guest-virtual→host-physical copy updated by trapping every guest page-table write, which was slow and complicated.</p>
+<p>With <strong>nested paging</strong> (AMD NPT, Intel EPT) the CPU walks both layers itself:</p>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 250" role="img" aria-label="A guest-virtual address is translated by the guest's page tables to a guest-physical address, then by the host's nested page tables to a host-physical address. Each guest page table level is itself stored at a guest-physical address, so each needs its own nested walk.">
+  <defs><marker id="b2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <rect x="20" y="40" width="150" height="56" rx="8" class="tint-g g-s"/><text x="34" y="64" class="sm b">guest-virtual</text><text x="34" y="82" class="xs mono">0x7f3a…</text>
+  <rect x="250" y="30" width="260" height="76" rx="8" class="box g-s"/>
+  <text x="264" y="50" class="sm b">guest page tables</text><text x="430" y="50" class="xs mut">owned by guest</text>
+  <rect x="264" y="62" width="52" height="30" rx="4" class="tint-g"/><text x="290" y="82" class="xs" text-anchor="middle">L4</text>
+  <rect x="322" y="62" width="52" height="30" rx="4" class="tint-g"/><text x="348" y="82" class="xs" text-anchor="middle">L3</text>
+  <rect x="380" y="62" width="52" height="30" rx="4" class="tint-g"/><text x="406" y="82" class="xs" text-anchor="middle">L2</text>
+  <rect x="438" y="62" width="52" height="30" rx="4" class="tint-g"/><text x="464" y="82" class="xs" text-anchor="middle">L1</text>
+  <rect x="580" y="40" width="130" height="56" rx="8" class="tint-g g-s"/><text x="594" y="64" class="sm b">guest-physical</text><text x="594" y="82" class="xs mono">0x2c41000</text>
+  <rect x="750" y="40" width="130" height="56" rx="8" class="tint-k k-s"/><text x="764" y="64" class="sm b">host-physical</text><text x="764" y="82" class="xs mono">real RAM</text>
+  <line x1="170" y1="68" x2="246" y2="68" class="ln" marker-end="url(#b2)"/>
+  <line x1="510" y1="68" x2="576" y2="68" class="ln" marker-end="url(#b2)"/>
+  <line x1="710" y1="68" x2="746" y2="68" class="ln acs" stroke-width="1.8" marker-end="url(#b2)"/>
+  <text x="728" y="122" class="xs" text-anchor="middle">NPT</text>
+  <rect x="250" y="160" width="630" height="40" rx="6" class="tint-k k-s"/>
+  <text x="264" y="185" class="sm b">nested page tables (owned by KVM)</text><text x="520" y="185" class="xs">guest-physical → host-physical, 4 levels</text>
+  <line x1="290" y1="94" x2="290" y2="156" class="lnm dash" marker-end="url(#b2)"/>
+  <line x1="348" y1="94" x2="348" y2="156" class="lnm dash" marker-end="url(#b2)"/>
+  <line x1="406" y1="94" x2="406" y2="156" class="lnm dash" marker-end="url(#b2)"/>
+  <line x1="464" y1="94" x2="464" y2="156" class="lnm dash" marker-end="url(#b2)"/>
+  <line x1="728" y1="98" x2="728" y2="156" class="ln acs dash" marker-end="url(#b2)"/>
+  <text x="20" y="140" class="xs">each guest table lives at a</text>
+  <text x="20" y="156" class="xs">guest-physical address, so</text>
+  <text x="20" y="172" class="xs">reading it needs a nested walk</text>
+  <text x="20" y="232" class="sm">TLB miss worst case: 24 memory reads instead of 4. TLB entries cache the whole GVA → HPA result, tagged per VM (ASID).</text>
+</svg>
+</div>
+<figcaption><b>The guest manages its own page tables freely; the host's nested tables decide what those addresses really mean.</b> A guest can only reach host memory that KVM put in its nested tables, which is the hardware isolation boundary. The nested tables are filled lazily: the first touch of a guest page exits to KVM, which is where the host's copy-on-write (chapter 7) gets its chance to act.</figcaption>
+</figure>
+
+<h3>Interrupts and time</h3>
+<p>A guest needs interrupts (a disk request finished, a timer fired) and a clock. The hypervisor <em>injects</em> virtual interrupts by setting fields in the VMCB before the next <code>VMRUN</code>; the guest sees them arrive as if from real hardware. Timers are emulated: when the guest programs its local APIC timer, KVM arms a host high-resolution timer and injects the interrupt when it fires. Reading the time would be expensive if every read exited, so KVM offers <strong>kvmclock</strong>, a paravirtual clock: a shared page in guest memory where KVM publishes the scaling between the CPU's timestamp counter and real time. The guest reads time with no exit at all.</p>
+
+<h3>Devices: emulated, paravirtual, or passed through</h3>
+<ul>
+  <li><strong>Full emulation.</strong> Pretend to be a real device, such as an Intel e1000 network card, so an unmodified driver works. Every register access is an exit, and real drivers touch registers many times per packet.</li>
+  <li><strong>Paravirtual (virtio).</strong> The guest knows it is virtual and uses a device designed for it: requests sit in rings in shared memory, and one notification can cover a whole batch. This is all Firecracker offers (chapter 4).</li>
+  <li><strong>Passthrough (VFIO).</strong> Hand a real PCI device to the guest, protected by the IOMMU. Native speed, but the device's state lives in hardware and can't be snapshotted.</li>
+</ul>
+
+<h3>Where KVM fits</h3>
+<p>Hypervisors are often called type 1 (runs on bare metal: Xen, ESXi) or type 2 (runs as an application on an OS: VirtualBox). KVM blurs the line. The module turns the Linux kernel itself into the hypervisor, so it runs on bare metal, but devices and configuration live in an ordinary userspace process, the VMM. The split is roughly:</p>
+<div class="tbl"><table>
+<tr><th>KVM (kernel)</th><th>VMM (userspace: Firecracker, QEMU, Cloud Hypervisor)</th></tr>
+<tr><td>Entering and leaving guest mode, the VMCB</td><td>Creating the VM and deciding its shape (CPUs, RAM, devices)</td></tr>
+<tr><td>Nested page tables, dirty-page logging</td><td>Allocating guest RAM (an <code>mmap</code>)</td></tr>
+<tr><td>Interrupt controllers, APIC timers, kvmclock</td><td>Loading the kernel, building boot tables</td></tr>
+<tr><td>CPUID and MSR exits, <code>hlt</code></td><td>Emulating devices: virtio, serial</td></tr>
+<tr><td>Scheduling: a vCPU is a host thread</td><td>API, snapshots, migration, policy</td></tr>
+</table></div>
+</section>
+
+<!-- ============================================================ 3 -->
+<section class="chapter" id="kvm">
+<div class="ch-num">Chapter 3</div>
+<h2>KVM: the kernel half</h2>
+<h3>Three kinds of file descriptor</h3>
+<p>KVM's whole API is ioctls on three kinds of file descriptor:</p>
+<ul>
+  <li><strong><code>/dev/kvm</code></strong>, the system handle: check the API version and capabilities, create VMs.</li>
+  <li><strong>A VM fd</strong> (<code>anon_inode:kvm-vm</code>), one per VM: register guest memory, create the in-kernel interrupt controller and timer, attach eventfds for device notifications and interrupts, read the dirty-page log.</li>
+  <li><strong>A vCPU fd</strong> (<code>anon_inode:kvm-vcpu:N</code>), one per virtual CPU: get and set registers, set CPUID, and run. Each vCPU fd also has a shared page, <code>struct kvm_run</code>, mapped into the VMM, where KVM explains why the last <code>KVM_RUN</code> returned.</li>
+</ul>
+<p>Stripped of error handling, every KVM-based VMM does this:</p>
+<pre><code>kvm  = open("/dev/kvm")
+vm   = ioctl(kvm, KVM_CREATE_VM)
+ram  = mmap(1 GiB)                                 // ordinary process memory
+ioctl(vm, KVM_SET_USER_MEMORY_REGION, {guest_phys: 0, size: 1 GiB, host_addr: ram})
+ioctl(vm, KVM_CREATE_IRQCHIP)                      // in-kernel PIC, IOAPIC, local APICs
+vcpu = ioctl(vm, KVM_CREATE_VCPU, 0)
+ioctl(vcpu, KVM_SET_CPUID2, ...)                   // which CPU features the guest sees
+// load kernel into ram, set registers, then on a dedicated thread:
+for {
+    ioctl(vcpu, KVM_RUN)        // CPU enters guest mode; returns on an exit KVM can't finish
+    switch run.exit_reason {
+    case KVM_EXIT_MMIO: emulate the device register the guest touched
+    case KVM_EXIT_IO:   emulate the I/O port
+    ...
+    }
+}</code></pre>
+<p class="key">The single most important line for understanding dune is the <code>mmap</code>. Guest RAM is a plain memory mapping inside the VMM process. Whatever Linux can do to a mapping (back it with a file, share it copy-on-write, track which pages were written) it can do to a VM's RAM.</p>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 300" role="img" aria-label="A Firecracker process has one thread per vCPU calling KVM_RUN, a VMM thread emulating virtio devices, and an API thread. Guest RAM is an mmap in the process that KVM maps as guest physical memory.">
+  <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <rect x="20" y="20" width="380" height="260" rx="10" class="tint-h h-s"/>
+  <text x="36" y="44" class="b">firecracker process (host userspace)</text>
+  <rect x="36" y="60" width="160" height="40" rx="6" class="box"/><text x="48" y="78" class="sm">VMM thread</text><text x="48" y="93" class="xs mut">virtio-blk/net/vsock</text>
+  <rect x="36" y="108" width="160" height="40" rx="6" class="box"/><text x="48" y="126" class="sm">API thread</text><text x="48" y="141" class="xs mut">/run/api.sock</text>
+  <rect x="210" y="60" width="174" height="40" rx="6" class="box"/><text x="222" y="85" class="sm">thread fc_vcpu 0</text>
+  <rect x="210" y="108" width="174" height="40" rx="6" class="box"/><text x="222" y="133" class="sm">thread fc_vcpu 1</text>
+  <rect x="36" y="168" width="348" height="96" rx="6" class="tint-g g-s"/>
+  <text x="48" y="190" class="sm b">guest RAM = mmap(mem_size_mib)</text>
+  <text x="48" y="210" class="xs">boot: anonymous memory</text>
+  <text x="48" y="226" class="xs">restore: mmap of snapshot file, MAP_PRIVATE</text>
+  <text x="48" y="248" class="xs mut">the guest kernel, its page cache, every process</text>
+  <rect x="490" y="20" width="190" height="260" rx="10" class="tint-k k-s"/>
+  <text x="506" y="44" class="b">KVM (kernel)</text>
+  <text x="506" y="70" class="xs">memslot: guest-phys 0..1G</text>
+  <text x="506" y="86" class="xs">  → this process's mmap</text>
+  <text x="506" y="112" class="xs">nested page tables</text>
+  <text x="506" y="138" class="xs">dirty log (bitmap)</text>
+  <text x="506" y="164" class="xs">kvmclock, irqchip</text>
+  <text x="506" y="190" class="xs">ioeventfd / irqfd</text>
+  <rect x="740" y="20" width="140" height="260" rx="10" class="box"/>
+  <text x="756" y="44" class="b">CPU</text>
+  <text x="756" y="70" class="xs">guest mode (svm)</text>
+  <text x="756" y="96" class="xs">runs guest code</text>
+  <text x="756" y="112" class="xs">natively until</text>
+  <text x="756" y="128" class="xs">a VM exit</text>
+  <line x1="384" y1="80" x2="486" y2="80" class="ln" marker-end="url(#a2)"/>
+  <text x="437" y="72" class="xs mut" text-anchor="middle">KVM_RUN</text>
+  <line x1="486" y1="128" x2="388" y2="128" class="ln dash" marker-end="url(#a2)"/>
+  <text x="437" y="120" class="xs mut" text-anchor="middle">exit: MMIO</text>
+  <line x1="680" y1="96" x2="736" y2="96" class="ln" marker-end="url(#a2)"/>
+  <text x="708" y="88" class="xs mut" text-anchor="middle">enter</text>
+  <line x1="736" y1="140" x2="684" y2="140" class="ln" marker-end="url(#a2)"/>
+  <text x="708" y="158" class="xs mut" text-anchor="middle">exit</text>
+  <line x1="486" y1="216" x2="388" y2="216" class="ln" marker-end="url(#a2)"/>
+  <text x="437" y="208" class="xs mut" text-anchor="middle">maps</text>
+</svg>
+</div>
+<figcaption><b>A vCPU is a thread that sits in <code>KVM_RUN</code>.</b> Guest code runs on the real CPU; only device accesses come back to Firecracker. Device notifications mostly travel through eventfds (<code>ioeventfd</code>, <code>irqfd</code>) so the vCPU thread doesn't have to stop for each one.</figcaption>
+</figure>
+
+<h3>Where each exit goes</h3>
+<p>Most exits never reach Firecracker. KVM handles them inside the kernel and re-enters the guest; <code>KVM_RUN</code> only returns to userspace when the VMM has to act.</p>
+<div class="tbl"><table>
+<tr><th>Guest does</th><th>Handled by</th><th>What happens</th></tr>
+<tr><td>Touches a guest page for the first time</td><td>KVM</td><td>Nested page fault: KVM faults in the backing page of the VMM's mapping (from the page cache, chapter 7) and fills the nested table.</td></tr>
+<tr><td><code>hlt</code> (idle)</td><td>KVM</td><td>The vCPU thread sleeps until an interrupt is due. An idle VM uses no host CPU.</td></tr>
+<tr><td>Programs its APIC timer, sends an inter-processor interrupt</td><td>KVM</td><td>The in-kernel interrupt controller emulates it.</td></tr>
+<tr><td>Executes <code>CPUID</code>, reads an MSR</td><td>KVM</td><td>Answers from the tables the VMM set.</td></tr>
+<tr><td>Writes a virtio queue-notify register</td><td>KVM, then the VMM's event loop</td><td>Matches a registered <code>ioeventfd</code>: KVM signals the eventfd and resumes the guest immediately. Firecracker picks it up on another thread.</td></tr>
+<tr><td>Reads or writes another virtio register</td><td>Firecracker</td><td><code>KVM_EXIT_MMIO</code>: the vCPU thread runs Firecracker's device code, then calls <code>KVM_RUN</code> again.</td></tr>
+<tr><td>Writes a byte to the serial port</td><td>Firecracker</td><td><code>KVM_EXIT_IO</code> on port <code>0x3f8</code>: one exit per character.</td></tr>
+</table></div>
+<p>Because a vCPU is a thread, the host scheduler decides when guests run. Four VMs with two vCPUs each on midas's 16 CPUs are just eight more threads. Nothing reserves a physical core for a guest unless you pin threads yourself.</p>
+
+<div class="lab">
+<div class="lab-head">On midas, with a VM running</div>
+<pre><code>grep -m1 -o -w svm /proc/cpuinfo           # hardware virtualization present
+lsmod | grep kvm                            # kvm + kvm_amd loaded
+PID=$(pgrep -n firecracker)
+sudo ls -l /proc/$PID/fd | grep -E 'kvm|mem|rootfs|tun|eventfd'
+#   /dev/kvm, anon_inode:kvm-vm, anon_inode:kvm-vcpu:0, many eventfds, the tap, the disk
+sudo grep -E 'mem|rootfs' /proc/$PID/maps    # guest RAM: a mapping of /mem (or anonymous after boot)
+top -H -p $PID                              # per-thread CPU: fc_vcpu threads near 0% when idle
+sudo mount -t debugfs none /sys/kernel/debug 2&gt;/dev/null
+sudo grep . /sys/kernel/debug/kvm/{exits,io_exits,mmio_exits,halt_exits}   # host-wide exit counters</code></pre>
+</div>
+</section>
+
+<!-- ============================================================ 4 -->
+<section class="chapter" id="firecracker">
+<div class="ch-num">Chapter 4</div>
+<h2>Inside Firecracker</h2>
+<p>Firecracker is a VMM written in Rust by AWS for Lambda and Fargate: thousands of short-lived, untrusted VMs per host. Every design choice follows from that: boot fast, use little memory, and expose as little code to the guest as possible. QEMU emulates a whole PC (BIOS, PCI, USB, graphics, hundreds of device models). Firecracker emulates a handful of devices and nothing else.</p>
+
+<h3>Threads and the event loop</h3>
+<div class="tbl"><table>
+<tr><th>Thread</th><th>Does</th></tr>
+<tr><td><code>firecracker</code> (main, the VMM thread)</td><td>An event loop: one <code>epoll_wait</code> over every device's queue-notify eventfds, the tap fd, the vsock unix socket, timer fds for rate limiters, and the API channel. All virtio data processing happens here.</td></tr>
+<tr><td><code>fc_api</code></td><td>Serves HTTP on <code>/run/api.sock</code>. It only parses requests; it passes each one to the VMM thread over a channel, wakes it with an eventfd, and waits for the reply.</td></tr>
+<tr><td><code>fc_vcpu 0</code>, <code>fc_vcpu 1</code>, …</td><td>The <code>KVM_RUN</code> loop. MMIO and port-I/O exits are handled right here by calling into the device's register code.</td></tr>
+</table></div>
+<p>Each thread installs its own seccomp filter at startup, tuned to what that thread needs. The vCPU threads, which run closest to the guest, get the narrowest list.</p>
+
+<h3>Configuring and booting</h3>
+<p>Until <code>InstanceStart</code>, the API only records configuration. This is <code>Boot</code> in <code>internal/backend/firecracker/firecracker.go</code>:</p>
+<pre><code>PUT /machine-config     {vcpu_count, mem_size_mib, track_dirty_pages: true}
+PUT /boot-source        {kernel_image_path: "/vmlinux", boot_args: "..."}
+PUT /drives/rootfs      {path_on_host: "/rootfs.ext4", is_root_device: true}
+PUT /network-interfaces/eth0 {host_dev_name: "tap0", guest_mac: "06:00:ac:10:00:02"}
+PUT /vsock              {guest_cid: 3, uds_path: "/v.sock"}
+PUT /actions            {action_type: "InstanceStart"}</code></pre>
+<p>Every path there is relative to the VM's chroot (chapter 5). On <code>InstanceStart</code> Firecracker builds the machine:</p>
+<ol class="steps">
+  <li><div>Creates the KVM VM, the in-kernel interrupt controller and timer, and <code>mmap</code>s guest RAM. RAM is laid out from guest-physical address 0, with a hole below 4 GiB where the device registers live.</div></li>
+  <li><div>Loads the kernel. <code>vmlinux</code> is an ELF file: Firecracker copies each loadable segment to its physical address in guest RAM. There is no BIOS and no bootloader.</div></li>
+  <li><div>Writes the boot information the kernel expects: the memory map, the command line, and tables describing the CPUs, the interrupt controller and the devices (ACPI or MP tables). The guest kernel on midas carries a PVH ELF note, which lets Firecracker use the PVH boot protocol: the vCPU starts in 32-bit protected mode at the PVH entry with a pointer to a start-info structure. Kernels without the note get the Linux 64-bit boot protocol instead, entering in 64-bit mode with page tables Firecracker builds. Either way the real-mode boot of a PC is skipped entirely.</div></li>
+  <li><div>Creates the devices and registers an <code>ioeventfd</code> and an <code>irqfd</code> for each virtio queue.</div></li>
+  <li><div>Creates the vCPUs, sets CPUID and registers, starts a thread per vCPU and calls <code>KVM_RUN</code>.</div></li>
+</ol>
+<p>That is why a VM boots in about 2 seconds, most of it spent in the guest's systemd. The kernel command line dune passes:</p>
+<pre><code>console=ttyS0 reboot=k panic=1 pci=off
+ip=172.16.0.2::172.16.0.1:255.255.255.252::eth0:off systemd.hostname=dune-&lt;id&gt;</code></pre>
+<div class="tbl"><table>
+<tr><th>Argument</th><th>Why</th></tr>
+<tr><td><code>console=ttyS0</code></td><td>Kernel and systemd output go to the emulated serial port, which ends up in <code>console.log</code>.</td></tr>
+<tr><td><code>reboot=k</code></td><td>Reboot through the keyboard controller, which Firecracker treats as "shut down the VM".</td></tr>
+<tr><td><code>panic=1</code></td><td>On a kernel panic, reboot (so exit) after 1 second instead of hanging.</td></tr>
+<tr><td><code>pci=off</code></td><td>There is no PCI bus; skip probing it. Devices are virtio-mmio.</td></tr>
+<tr><td><code>ip=…</code></td><td>The kernel configures <code>eth0</code> and the default route itself, before init runs (chapter 10). Needs <code>CONFIG_IP_PNP</code> in the guest kernel.</td></tr>
+<tr><td><code>systemd.hostname=</code></td><td>Initial hostname. Forks get theirs from the agent instead (chapter 9).</td></tr>
+</table></div>
+
+<h3>The devices</h3>
+<div class="tbl"><table>
+<tr><th>Device</th><th>Guest sees</th><th>Used by dune</th></tr>
+<tr><td>8250 UART</td><td><code>ttyS0</code>, on I/O port <code>0x3f8</code></td><td>Boot log in <code>console.log</code></td></tr>
+<tr><td>i8042 keyboard controller</td><td>Only its reset line</td><td><code>reboot=k</code>: guest reboot ends the VM</td></tr>
+<tr><td>virtio-blk</td><td><code>/dev/vda</code></td><td>The rootfs</td></tr>
+<tr><td>virtio-net</td><td><code>eth0</code></td><td>Backed by <code>tap0</code></td></tr>
+<tr><td>virtio-vsock</td><td><code>AF_VSOCK</code>, CID 3</td><td>The guest agent (chapter 11)</td></tr>
+<tr><td>virtio-balloon, virtio-rng, others</td><td>Optional</td><td>Not configured</td></tr>
+</table></div>
+
+<h3>How virtio works</h3>
+<p>Each virtio-mmio device is one page of registers at a fixed guest-physical address: an identity (magic value, device type), feature bits the driver and device negotiate, the addresses and sizes of its queues, a <code>QueueNotify</code> register, and interrupt status. The registers are only for setup and signaling. The data itself moves through <strong>virtqueues</strong>, ring buffers that live in guest RAM and that both sides read and write directly. Firecracker can do that because guest RAM is mapped in its own address space.</p>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 330" role="img" aria-label="A split virtqueue in guest memory. The descriptor table lists buffers, chained by next pointers: a request header, a 4 KiB data buffer and a one-byte status buffer the device may write. The driver puts the chain's head index in the available ring; the device returns it in the used ring with the number of bytes written.">
+  <defs><marker id="b3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <rect x="20" y="20" width="860" height="296" rx="10" class="boxi"/>
+  <text x="36" y="42" class="sm mut">all of this is in guest RAM, which Firecracker also has mapped</text>
+  <!-- descriptor table -->
+  <text x="40" y="74" class="b">descriptor table</text>
+  <rect x="40" y="84" width="330" height="26" class="tint-s"/><text x="50" y="102" class="xs b">#</text><text x="80" y="102" class="xs b">addr</text><text x="180" y="102" class="xs b">len</text><text x="230" y="102" class="xs b">flags</text><text x="320" y="102" class="xs b">next</text>
+  <rect x="40" y="110" width="330" height="28" class="box"/><text x="50" y="129" class="xs">0</text><text x="80" y="129" class="xs mono">0x…a00</text><text x="180" y="129" class="xs">16</text><text x="230" y="129" class="xs">NEXT</text><text x="320" y="129" class="xs">1</text>
+  <rect x="40" y="138" width="330" height="28" class="box"/><text x="50" y="157" class="xs">1</text><text x="80" y="157" class="xs mono">0x…3000</text><text x="180" y="157" class="xs">4096</text><text x="230" y="157" class="xs">NEXT</text><text x="320" y="157" class="xs">2</text>
+  <rect x="40" y="166" width="330" height="28" class="box"/><text x="50" y="185" class="xs">2</text><text x="80" y="185" class="xs mono">0x…b10</text><text x="180" y="185" class="xs">1</text><text x="230" y="185" class="xs">WRITE</text><text x="320" y="185" class="xs">–</text>
+  <rect x="40" y="194" width="330" height="28" class="box"/><text x="50" y="213" class="xs mut">3</text><text x="80" y="213" class="xs mut">free</text>
+  <!-- buffers -->
+  <text x="450" y="74" class="b">buffers</text>
+  <rect x="450" y="110" width="200" height="28" rx="4" class="tint-g g-s"/><text x="460" y="129" class="xs">header: OUT, sector 81920</text>
+  <rect x="450" y="138" width="200" height="28" rx="4" class="tint-g g-s"/><text x="460" y="157" class="xs">data: 4 KiB to write</text>
+  <rect x="450" y="166" width="200" height="28" rx="4" class="tint-a acs"/><text x="460" y="185" class="xs">status: 1 byte (device writes)</text>
+  <line x1="370" y1="124" x2="446" y2="124" class="lnm" marker-end="url(#b3)"/>
+  <line x1="370" y1="152" x2="446" y2="152" class="lnm" marker-end="url(#b3)"/>
+  <line x1="370" y1="180" x2="446" y2="180" class="lnm" marker-end="url(#b3)"/>
+  <!-- rings -->
+  <text x="700" y="74" class="b">available ring</text>
+  <rect x="700" y="84" width="170" height="60" rx="6" class="box h-s"/>
+  <text x="712" y="104" class="xs">written by the driver</text>
+  <text x="712" y="124" class="xs mono">idx 7 · ring[6] = 0</text>
+  <text x="700" y="178" class="b">used ring</text>
+  <rect x="700" y="188" width="170" height="60" rx="6" class="box h-s"/>
+  <text x="712" y="208" class="xs">written by the device</text>
+  <text x="712" y="228" class="xs mono">idx 7 · {id 0, len 1}</text>
+  <text x="40" y="262" class="sm">The driver fills descriptors 0 → 1 → 2, publishes head 0 in the available ring, then notifies.</text>
+  <text x="40" y="282" class="sm">The device processes the chain, writes the status byte, publishes {id 0, len 1} in the used ring, then interrupts.</text>
+  <text x="40" y="302" class="xs mut">Both sides only ever advance their own index; no locks are shared between guest and host.</text>
+</svg>
+</div>
+<figcaption><b>A virtqueue is a request queue in shared memory.</b> One disk write is a chain of three descriptors. Because both sides can see the rings directly, the only signals needed are "there's new work" (a notify) and "work is done" (an interrupt), and either can cover many requests at once.</figcaption>
+</figure>
+
+<h3>One disk write, end to end</h3>
+<p>Say a process in the guest writes a file and the guest kernel flushes it to <code>/dev/vda</code>:</p>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 470" role="img" aria-label="Sequence of a guest disk write: the guest driver posts a descriptor chain and writes QueueNotify; KVM matches the ioeventfd, signals it and resumes the vCPU; Firecracker's VMM thread wakes, reads the chain from guest memory and calls pwrite on rootfs.ext4; it writes the status and used ring and signals the irqfd; KVM injects an interrupt and the guest driver completes the request.">
+  <defs><marker id="b4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <rect x="40" y="20" width="160" height="40" rx="8" class="tint-g g-s"/><text x="120" y="45" class="sm b" text-anchor="middle">guest virtio_blk</text>
+  <rect x="270" y="20" width="160" height="40" rx="8" class="tint-k k-s"/><text x="350" y="45" class="sm b" text-anchor="middle">KVM</text>
+  <rect x="500" y="20" width="170" height="40" rx="8" class="tint-h h-s"/><text x="585" y="45" class="sm b" text-anchor="middle">Firecracker VMM thread</text>
+  <rect x="730" y="20" width="150" height="40" rx="8" class="tint-s s-s"/><text x="805" y="45" class="sm b" text-anchor="middle">host: rootfs.ext4</text>
+  <line x1="120" y1="60" x2="120" y2="456" class="lnm dash"/>
+  <line x1="350" y1="60" x2="350" y2="456" class="lnm dash"/>
+  <line x1="585" y1="60" x2="585" y2="456" class="lnm dash"/>
+  <line x1="805" y1="60" x2="805" y2="456" class="lnm dash"/>
+  <!-- 1 -->
+  <rect x="44" y="76" width="152" height="40" rx="6" class="box"/><text x="54" y="93" class="xs">1 · build chain,</text><text x="54" y="108" class="xs">add head to avail ring</text>
+  <!-- 2 -->
+  <line x1="120" y1="140" x2="346" y2="140" class="ln" marker-end="url(#b4)"/><text x="232" y="132" class="xs" text-anchor="middle">2 · write QueueNotify (MMIO)</text>
+  <!-- 3 -->
+  <line x1="350" y1="172" x2="581" y2="172" class="ln" marker-end="url(#b4)"/><text x="466" y="164" class="xs" text-anchor="middle">3 · signal ioeventfd</text>
+  <line x1="350" y1="190" x2="124" y2="190" class="ln dash" marker-end="url(#b4)"/><text x="236" y="206" class="xs mut" text-anchor="middle">resume vCPU at once</text>
+  <!-- 4 -->
+  <rect x="505" y="222" width="160" height="40" rx="6" class="box"/><text x="515" y="239" class="xs">4 · epoll wakes; read the</text><text x="515" y="254" class="xs">chain from guest RAM</text>
+  <!-- 5 -->
+  <line x1="585" y1="286" x2="801" y2="286" class="ln" marker-end="url(#b4)"/><text x="694" y="278" class="xs" text-anchor="middle">5 · pwrite(fd, 4 KiB, offset)</text>
+  <line x1="805" y1="304" x2="589" y2="304" class="ln dash" marker-end="url(#b4)"/><text x="694" y="320" class="xs mut" text-anchor="middle">done (XFS may copy-on-write)</text>
+  <!-- 6 -->
+  <rect x="505" y="336" width="160" height="40" rx="6" class="box"/><text x="515" y="353" class="xs">6 · status = OK,</text><text x="515" y="368" class="xs">add to used ring</text>
+  <!-- 7 -->
+  <line x1="585" y1="398" x2="354" y2="398" class="ln" marker-end="url(#b4)"/><text x="470" y="390" class="xs" text-anchor="middle">7 · signal irqfd</text>
+  <!-- 8 -->
+  <line x1="350" y1="430" x2="124" y2="430" class="ln acs" stroke-width="1.8" marker-end="url(#b4)"/><text x="236" y="422" class="xs" text-anchor="middle">8 · inject interrupt</text>
+  <text x="128" y="452" class="xs mut">driver completes the request</text>
+</svg>
+</div>
+<figcaption><b>One exit per batch, and it never reaches userspace.</b> The notify in step 2 is caught by KVM and turned into an eventfd signal; the vCPU keeps running guest code while the VMM thread does the I/O in parallel. The completion in step 7 goes the other way through an irqfd. Step 5 is where XFS's copy-on-write (chapter 7) happens for a reflinked disk.</figcaption>
+</figure>
+<p>By default the block device does the write synchronously on the VMM thread (<code>pwrite</code>); an optional <code>Async</code> engine uses io_uring instead. Network traffic follows the same pattern. To transmit, the guest posts a frame and Firecracker <code>write()</code>s it to the tap fd. To receive, the tap fd is in the epoll set: when it's readable, Firecracker reads the frame straight into the next receive buffer the guest posted and signals the irqfd.</p>
+<p>QEMU can hand the network data path to a kernel thread (<em>vhost-net</em>) to save a copy and a context switch. Firecracker deliberately keeps every byte of device processing in its own unprivileged, seccomp-confined process, trading some throughput for a smaller attack surface.</p>
+<p>The serial console is the opposite of virtio. Every character is an <code>out</code> instruction to port <code>0x3f8</code>, an exit all the way to the vCPU thread, which writes the byte to stdout. That is fine for a boot log and far too slow for data, which is why dune's terminals go over vsock.</p>
+
+<h3>Pause, snapshot, restore</h3>
+<p><strong>Pause.</strong> The VMM thread tells each vCPU thread to stop. A thread inside <code>KVM_RUN</code> can't see a message, so Firecracker sets the <code>immediate_exit</code> flag in its <code>kvm_run</code> page and sends the thread a real-time signal. The signal makes <code>KVM_RUN</code> return with <code>EINTR</code>, and the thread parks until resume. The guest is frozen between two instructions.</p>
+<p><strong>Snapshot.</strong> With every vCPU parked, Firecracker reads the whole machine out through KVM: each vCPU's general, segment, FPU/vector and model-specific registers and its local APIC; VM-wide state such as the interrupt controllers, the timer and the kvmclock. It adds its own device state: each virtqueue's addresses and ring positions, negotiated features, and the network and vsock state. All of it is serialized into <code>vmstate</code>, with a format version and a checksum. Memory goes to the <code>mem</code> file: everything for a full snapshot, only the dirty pages for a diff (chapter 8).</p>
+<p><strong>CPUID and portability.</strong> A guest discovers CPU features (AVX-512, for example) at boot through <code>CPUID</code>, which Firecracker filters. A restored guest keeps using what it discovered, so restoring on a CPU without one of those features would crash the guest the next time it used it. Firecracker offers <em>CPU templates</em> that mask features down to a common baseline for mixed fleets; dune doesn't use them, so snapshots are tied to midas's CPU, as well as to the Firecracker version that wrote the <code>vmstate</code>.</p>
+<p><strong>Restore</strong> runs the build in reverse: create the KVM VM, map the memory, recreate devices from their saved state, push every register back with the matching <code>KVM_SET_*</code> ioctls, and resume. There are two ways to provide memory:</p>
+<ul>
+  <li><strong>File</strong> (dune's choice): <code>mmap</code> the file <code>MAP_PRIVATE</code>, and the host page cache supplies pages on demand (chapter 7).</li>
+  <li><strong>Uffd</strong>: register guest memory with <code>userfaultfd</code> and hand the descriptor to a separate page-server process. Every first touch of a page becomes an event that the server answers by copying a page in, for example from remote storage. This is how fleets restore snapshots without copying them locally first, and why the jailer creates <code>/dev/userfaultfd</code> in every jail.</li>
+</ul>
+<p>After restore, Firecracker sends the guest's vsock driver a transport-reset event, because host-side connections from before the snapshot no longer exist.</p>
+
+<h3>Features dune doesn't use</h3>
+<div class="tbl"><table>
+<tr><th>Feature</th><th>What it does</th></tr>
+<tr><td>Rate limiters</td><td>Token buckets on block and network bandwidth and operations, enforced in the VMM thread.</td></tr>
+<tr><td>Balloon</td><td>A virtio device the guest uses to hand unused memory back to the host.</td></tr>
+<tr><td>MMDS</td><td>A metadata HTTP service at <code>169.254.169.254</code>, answered by the network device itself without reaching the host network.</td></tr>
+<tr><td>Huge pages</td><td>Back guest RAM with 2 MiB pages: shorter nested page walks, fewer TLB misses.</td></tr>
+<tr><td>CPU templates</td><td>Mask CPUID so snapshots move between hosts with different CPUs.</td></tr>
+<tr><td>PCI</td><td>Newer releases can expose virtio devices over PCI instead of MMIO.</td></tr>
+</table></div>
+
+<h3>Firecracker among other VMMs</h3>
+<div class="tbl"><table>
+<tr><th>VMM</th><th>Built for</th><th>Shape</th></tr>
+<tr><td>QEMU</td><td>Everything: desktops, servers, other architectures</td><td>C. Full PC emulation, every device model, live migration, plus software emulation without KVM.</td></tr>
+<tr><td>Firecracker</td><td>Serverless (AWS Lambda, Fargate)</td><td>Rust. virtio-mmio, no BIOS, jailer, fast snapshot restore.</td></tr>
+<tr><td>Cloud Hypervisor</td><td>Cloud VMs</td><td>Rust, shares code with Firecracker (rust-vmm). PCI, hotplug, VFIO, Windows guests.</td></tr>
+<tr><td>crosvm</td><td>ChromeOS and Android VMs</td><td>Rust; the project Firecracker started from.</td></tr>
+</table></div>
+
+<div class="lab">
+<div class="lab-head">On midas, with a VM running</div>
+<pre><code>PID=$(pgrep -n firecracker); ID=&lt;vm id&gt;
+ps -T -p $PID -o tid,comm                    # firecracker, fc_api, fc_vcpu 0 ...
+# Watch the VMM thread do guest disk I/O (step 5 above):
+sudo strace -f -p $PID -e trace=pwrite64,pread64,epoll_wait -T 2&gt;&amp;1 | head -40 &amp;
+dune exec $ID dd if=/dev/zero of=/root/x bs=1M count=20 oflag=direct
+# From inside the guest:
+dune exec $ID cat /proc/cmdline              # dune's boot args plus what Firecracker appended
+dune exec $ID ls /sys/bus/virtio/devices     # virtio0 … one per device
+dune exec $ID grep -i virtio /proc/interrupts   # interrupt counts per queue
+dune exec $ID dmesg | grep -iE 'virtio|vda|vsock' | head</code></pre>
+</div>
+</section>
+
+<!-- ============================================================ 3 -->
+<section class="chapter" id="isolation">
+<div class="ch-num">Chapter 5</div>
+<h2>Isolation, and why there is a chroot</h2>
+<h3>The threat model</h3>
+<p>Assume the guest is hostile. It is root inside its own kernel and can do anything there; that is fine, the guest kernel is its to break. The question is what happens if it finds a bug in Firecracker's device emulation (say, a malformed virtio descriptor that triggers a memory bug). Then the attacker is running code <em>as the Firecracker process on the host</em>. Every layer below exists to make that process as useless as possible to an attacker. This is defense in depth: each layer assumes the one inside it has failed.</p>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 420" role="img" aria-label="Six nested layers surround the guest: KVM hardware boundary, Firecracker's small device model, seccomp syscall filter, chroot with its own uid, network namespace, and cgroup scope.">
+  <rect x="20" y="20" width="860" height="380" rx="14" class="box h-s dash"/>
+  <text x="38" y="44" class="b">6 · cgroup scope</text><text x="168" y="44" class="sm mut">dune-vm-&lt;id&gt;.scope in dune.slice · accounting, survives duned restarts</text>
+  <rect x="44" y="58" width="812" height="324" rx="12" class="box h-s"/>
+  <text x="62" y="82" class="b">5 · network namespace</text><text x="232" y="82" class="sm mut">dune-&lt;id&gt;: sees only lo, tap0, veth0 · VM-to-VM traffic dropped</text>
+  <rect x="68" y="96" width="764" height="268" rx="11" class="box h-s"/>
+  <text x="86" y="120" class="b">4 · chroot + mount namespace + uid 1000NN</text><text x="386" y="120" class="sm mut">sees only its jail · owns only its own disk</text>
+  <rect x="92" y="134" width="716" height="212" rx="10" class="tint-h h-s"/>
+  <text x="110" y="158" class="b">3 · seccomp</text><text x="200" y="158" class="sm mut">per-thread syscall allowlists, installed by Firecracker at start</text>
+  <rect x="116" y="172" width="668" height="156" rx="9" class="box h-s"/>
+  <text x="134" y="196" class="b">2 · Firecracker</text><text x="248" y="196" class="sm mut">Rust, ~5 emulated devices, no BIOS, no PCI</text>
+  <rect x="140" y="210" width="620" height="100" rx="8" class="tint-k k-s"/>
+  <text x="158" y="234" class="b">1 · KVM / nested paging</text><text x="334" y="234" class="sm mut">guest can only address memory the host mapped</text>
+  <rect x="164" y="248" width="572" height="46" rx="7" class="tint-g g-s"/>
+  <text x="450" y="276" class="b" text-anchor="middle">guest: untrusted kernel + userspace (root inside)</text>
+</svg>
+</div>
+<figcaption><b>Six layers between the guest and the host.</b> Layers 1 and 2 stop the guest from escaping into Firecracker. Layers 3 to 6 limit what an attacker could do if they did escape: few syscalls, no host files, no uid with power, no view of other VMs' traffic.</figcaption>
+</figure>
+
+<h3>The jailer, step by step</h3>
+<p>Firecracker ships with a companion binary, the <strong>jailer</strong>. duned runs it as root (via <code>systemd-run</code>, chapter 12) with these arguments, from <code>start()</code> in the backend:</p>
+<pre><code>jailer --id &lt;vm&gt; --exec-file /srv/dune/bin/firecracker \
+       --uid 1000NN --gid 1000NN \
+       --chroot-base-dir /srv/dune/store/jail \
+       --netns /run/netns/dune-&lt;vm&gt; \
+       -- --api-sock /run/api.sock --log-path /firecracker.log ...</code></pre>
+<p>The jailer needs root for a few privileged steps, does them, then throws root away before any guest code exists:</p>
+<ol class="steps">
+  <li><div>Create <code>/srv/dune/store/jail/firecracker/&lt;vm&gt;/root</code> and copy the Firecracker binary into it.</div></li>
+  <li><div><code>unshare(CLONE_NEWNS)</code>: get a private <strong>mount namespace</strong>, so mount changes below are invisible to the host.</div></li>
+  <li><div>Bind-mount the jail directory onto itself and <code>pivot_root</code> into it, then unmount the old root. Unlike a plain <code>chroot()</code>, <code>pivot_root</code> leaves no path back to the host's <code>/</code>; it is gone from this namespace entirely.</div></li>
+  <li><div><code>mknod</code> the only devices Firecracker needs inside the jail: <code>/dev/kvm</code>, <code>/dev/net/tun</code>, <code>/dev/urandom</code>, <code>/dev/userfaultfd</code>, owned by the VM's uid.</div></li>
+  <li><div><code>setns()</code> into the VM's network namespace, which duned created beforehand (chapter 10).</div></li>
+  <li><div>Close inherited file descriptors, apply resource limits, <code>setgid</code>/<code>setuid</code> to 1000NN.</div></li>
+  <li><div><code>exec /firecracker</code>. Firecracker installs its seccomp filters on each thread, then serves its API.</div></li>
+</ol>
+<p>After step 7, the process is an unprivileged user in an empty filesystem. Here is everything it can see (from the package comment in <code>firecracker.go</code>):</p>
+<pre><code>/firecracker          the binary itself (copied in by the jailer)
+/rootfs.ext4          this VM's private disk           uid 1000NN, 0600, reflink
+/vmlinux              guest kernel (boot only)         hard link
+/vmstate, /mem        snapshot files (restore only)    root, 0444, hard links
+/run/api.sock         Firecracker's REST API           created by Firecracker
+/v.sock               vsock bridge to the guest agent  created by Firecracker
+/firecracker.log
+/dev/kvm  /dev/net/tun  /dev/urandom  /dev/userfaultfd</code></pre>
+
+<h3>Why a different uid for every VM</h3>
+<p>Each VM gets a network slot N (a small integer, unique among live VMs) and runs as uid/gid <code>100000 + N</code> (<code>Manager.machine</code> in <code>internal/vm/vm.go</code>). Two compromised VMs therefore can't touch each other's files or signal each other's processes, even if a bug let one see the other's jail. The snapshot files hard-linked into jails are owned by root with mode <code>0444</code>: a VM can read them (it has to, to restore) but never modify them, which would corrupt every sibling fork. That also covers slot reuse: a future VM that inherits a dead VM's uid still can't write to that VM's old snapshots.</p>
+
+<h3>The second reason for the chroot: same path, different file</h3>
+<p>Security is half the story. The other half came out of the spike (<code>docs/spike.md</code>): a Firecracker snapshot records the disk's <em>path</em>, not the disk. If VM A was snapshotted with its disk at <code>/rootfs.ext4</code>, every VM restored from that snapshot will open <code>/rootfs.ext4</code>. Without a chroot, three forks would open the same host file and corrupt it. With a chroot each fork has its own <code>/</code>, so the same string resolves to a different file:</p>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 250" role="img" aria-label="A snapshot's vmstate records the disk path /rootfs.ext4. Three forks restore it; in each fork's chroot that path resolves to a different host file.">
+  <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <rect x="20" y="85" width="230" height="80" rx="8" class="tint-s s-s"/>
+  <text x="36" y="110" class="b">snapshots/b9a6/vmstate</text>
+  <text x="36" y="132" class="mono">drive rootfs:</text>
+  <text x="36" y="150" class="mono">  "/rootfs.ext4"</text>
+  <g>
+    <rect x="330" y="22" width="190" height="52" rx="7" class="tint-h h-s"/><text x="344" y="44" class="sm b">fork 1a2b</text><text x="344" y="62" class="xs mut">open("/rootfs.ext4")</text>
+    <rect x="330" y="99" width="190" height="52" rx="7" class="tint-h h-s"/><text x="344" y="121" class="sm b">fork 3c4d</text><text x="344" y="139" class="xs mut">open("/rootfs.ext4")</text>
+    <rect x="330" y="176" width="190" height="52" rx="7" class="tint-h h-s"/><text x="344" y="198" class="sm b">fork 5e6f</text><text x="344" y="216" class="xs mut">open("/rootfs.ext4")</text>
+  </g>
+  <line x1="250" y1="112" x2="326" y2="50" class="ln" marker-end="url(#a3)"/>
+  <line x1="250" y1="125" x2="326" y2="125" class="ln" marker-end="url(#a3)"/>
+  <line x1="250" y1="138" x2="326" y2="200" class="ln" marker-end="url(#a3)"/>
+  <text x="288" y="100" class="xs mut" text-anchor="middle">restore</text>
+  <g class="mono">
+    <line x1="520" y1="48" x2="586" y2="48" class="ln" marker-end="url(#a3)"/>
+    <line x1="520" y1="125" x2="586" y2="125" class="ln" marker-end="url(#a3)"/>
+    <line x1="520" y1="202" x2="586" y2="202" class="ln" marker-end="url(#a3)"/>
+  </g>
+  <text x="553" y="40" class="xs mut" text-anchor="middle">chroot</text>
+  <text x="592" y="44" class="mono">jail/…/1a2b/root/rootfs.ext4</text>
+  <text x="592" y="60" class="xs mut">own reflinked copy</text>
+  <text x="592" y="121" class="mono">jail/…/3c4d/root/rootfs.ext4</text>
+  <text x="592" y="137" class="xs mut">own reflinked copy</text>
+  <text x="592" y="198" class="mono">jail/…/5e6f/root/rootfs.ext4</text>
+  <text x="592" y="214" class="xs mut">own reflinked copy</text>
+</svg>
+</div>
+<figcaption><b>The chroot is what makes forking possible at all.</b> The same trick gives every fork its API socket at <code>/run/api.sock</code> and its vsock at <code>/v.sock</code>, which the restored guest's device state also refers to.</figcaption>
+</figure>
+
+<div class="lab">
+<div class="lab-head">On midas, with a VM running</div>
+<pre><code>PID=$(pgrep -n firecracker)
+ps -o pid,user,cmd -p $PID              # user is 1000NN, not root
+sudo ls -l /proc/$PID/root/             # the jail, as the process sees "/"
+grep -E 'Uid|Gid|Seccomp|NoNewPrivs' /proc/$PID/status   # Seccomp: 2 = filter mode
+sudo readlink /proc/$PID/ns/mnt /proc/1/ns/mnt   # different mount namespaces
+sudo readlink /proc/$PID/ns/net /proc/1/ns/net   # different network namespaces
+cat /proc/$PID/cgroup                    # 0::/dune.slice/dune-vm-&lt;id&gt;.scope</code></pre>
+</div>
+</section>
+
+<!-- ============================================================ 4 -->
+<section class="chapter" id="storage">
+<div class="ch-num">Chapter 6</div>
+<h2>Storage: a filesystem inside a file</h2>
+<p>midas's <code>/srv</code> is ext4 on LVM. ext4 can't share blocks between files, and dune needs that for instant disk clones. Instead of reformatting a partition, dune creates a 500 GB XFS filesystem <em>inside a file</em> and mounts it. <code>storage.Setup</code> does it in three commands:</p>
+<pre><code>truncate -s 500G /srv/dune/store.img           # sparse: allocates nothing
+mkfs.xfs -q -m reflink=1 /srv/dune/store.img   # XFS with shared-extent support
+mount -o loop /srv/dune/store.img /srv/dune/store</code></pre>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 420" role="img" aria-label="Storage stack from bottom to top: NVMe or SSD, LVM volume midas-vg/srv, ext4 mounted at /srv, sparse file store.img, loop device /dev/loop1, XFS with reflink mounted at /srv/dune/store, containing images, snapshots and jail directories. fstrim on top punches holes back into the sparse file.">
+  <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <g>
+    <rect x="20" y="20" width="620" height="78" rx="8" class="tint-s s-s"/>
+    <text x="36" y="44" class="b">XFS, reflink=1 — mounted at /srv/dune/store</text>
+    <rect x="36" y="56" width="180" height="30" rx="5" class="box"/><text x="46" y="76" class="mono">images/&lt;name&gt;/</text>
+    <rect x="226" y="56" width="180" height="30" rx="5" class="box"/><text x="236" y="76" class="mono">snapshots/&lt;id&gt;/</text>
+    <rect x="416" y="56" width="210" height="30" rx="5" class="box"/><text x="426" y="76" class="mono">jail/firecracker/&lt;vm&gt;/</text>
+  </g>
+  <rect x="20" y="114" width="620" height="50" rx="8" class="tint-k k-s"/>
+  <text x="36" y="136" class="b">/dev/loop1</text><text x="130" y="136" class="sm">loop driver: block reads/writes become file reads/writes</text>
+  <text x="36" y="154" class="xs mut">discard requests become fallocate(PUNCH_HOLE)</text>
+  <rect x="20" y="180" width="620" height="60" rx="8" class="box s-s"/>
+  <text x="36" y="203" class="b">/srv/dune/store.img</text><text x="190" y="203" class="sm">a sparse file</text>
+  <text x="36" y="226" class="sm mono">apparent 500G · allocated 679M (at time of writing)</text>
+  <rect x="20" y="256" width="620" height="46" rx="8" class="box"/>
+  <text x="36" y="284" class="b">ext4 at /srv</text><text x="140" y="284" class="sm mut">no reflink support, which is the reason for the layers above</text>
+  <rect x="20" y="318" width="620" height="40" rx="8" class="box"/>
+  <text x="36" y="343" class="b">LVM logical volume midas-vg/srv</text>
+  <rect x="20" y="372" width="620" height="36" rx="8" class="box"/>
+  <text x="36" y="395" class="b">physical disk</text>
+  <path d="M680,60 L680,210" class="ln" marker-end="url(#a4)"/>
+  <text x="694" y="98" class="sm b">fstrim /srv/dune/store</text>
+  <text x="694" y="118" class="xs">XFS lists its free blocks</text>
+  <text x="694" y="134" class="xs">loop punches holes</text>
+  <text x="694" y="150" class="xs">ext4 frees the space</text>
+  <text x="694" y="174" class="xs mut">run 30 s after deletes</text>
+  <text x="694" y="190" class="xs mut">(Manager.trimSoon)</text>
+</svg>
+</div>
+<figcaption><b>Two filesystems stacked through a loop device.</b> XFS gives dune reflinks; the sparse backing file means the 500 GB store only occupies what is written; <code>fstrim</code> is what makes deletes in the store free space on <code>/srv</code>.</figcaption>
+</figure>
+
+<h3>Sparse files</h3>
+<p>A file's size and the disk space it uses are separate numbers. <code>truncate -s 500G</code> sets the size without allocating any blocks; the unallocated ranges are <em>holes</em> that read back as zeros. <code>ls -l</code> shows the size, <code>du</code> shows the allocation. When XFS writes somewhere in its "disk", the loop driver writes into the file, and ext4 allocates blocks for just that range.</p>
+<p>The problem is the reverse direction. When you delete a VM, XFS marks its blocks free in its own metadata, but the loop file's blocks stay allocated: ext4 has no idea that XFS no longer cares about them. <code>fstrim</code> fixes that. It asks XFS to issue <em>discard</em> requests for all its free space; the loop driver turns each one into <code>fallocate(PUNCH_HOLE)</code> on <code>store.img</code>, and ext4 releases the blocks. In the spike the image shrank from 1.3 GB to 251 MB after one trim. dune runs it automatically 30 seconds after the last delete, and you can trigger it with <code>dune storage trim</code>.</p>
+
+<h3>Why everything lives on the one store</h3>
+<p>Hard links and reflinks only work within a single filesystem. That is why the jails live at <code>/srv/dune/store/jail</code> and not in <code>/var</code>: the jail's disk is a reflink of a snapshot or image, and its <code>mem</code>/<code>vmstate</code>/<code>vmlinux</code> are hard links. Snapshots also move files out of the jail with <code>rename()</code>, which is only atomic and free within one filesystem.</p>
+
+<div class="lab">
+<div class="lab-head">On midas</div>
+<pre><code>ls -ls /srv/dune/store.img        # first column: KiB actually allocated
+du -h --apparent-size /srv/dune/store.img; du -h /srv/dune/store.img
+losetup -l                         # which loop device backs which file
+findmnt /srv/dune/store            # SOURCE /dev/loop1, FSTYPE xfs
+sudo xfs_info /srv/dune/store | grep -o 'reflink=[01]'
+df -h /srv /srv/dune/store         # two filesystems, two different "free" numbers</code></pre>
+</div>
+</section>
+
+<!-- ============================================================ 5 -->
+<section class="chapter" id="cow">
+<div class="ch-num">Chapter 7</div>
+<h2>Copy-on-write, three ways</h2>
+<p>"Copy-on-write" appears at three different levels in dune, and keeping them apart is most of understanding forks. All three share the same idea: two users share one copy until one of them writes, and then only the written piece is copied.</p>
+<div class="tbl"><table>
+<tr><th>What</th><th>Shared object</th><th>Granularity</th><th>Who copies on write</th></tr>
+<tr><td>VM disks</td><td>blocks on disk</td><td>4 KiB filesystem blocks</td><td>XFS (reflink)</td></tr>
+<tr><td>VM memory</td><td>pages in RAM (page cache)</td><td>4 KiB pages</td><td>The kernel's memory manager (<code>MAP_PRIVATE</code>)</td></tr>
+<tr><td>Snapshot chains</td><td>earlier snapshots</td><td>4 KiB guest pages</td><td>KVM dirty log + Firecracker diff snapshots</td></tr>
+</table></div>
+<p>And one thing that is <em>not</em> copy-on-write: <strong>hard links</strong>. A hard link is a second name for the same inode, so a write through either name changes the one file. dune uses hard links only for files nobody may write (snapshot files, kernels), and reflinks for anything a VM writes.</p>
+
+<h3>1 · Disk: XFS reflinks</h3>
+<p>A file in XFS is an inode plus a list of <em>extents</em>: "file bytes 0 to 64 MiB live in disk blocks 1000 to 17383". A reflink copy (the <code>FICLONE</code> ioctl, which <code>storage.Reflink</code> calls; <code>cp --reflink</code> does the same) creates a new inode whose extent list points at the <em>same blocks</em>, and increments a reference count on those blocks in XFS's refcount btree. No data moves, so cloning a 2 GiB disk takes milliseconds and zero bytes.</p>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 330" role="img" aria-label="Before: snapshot disk and fork disk both point at blocks A B C D with refcount 2. After the fork writes to its third block, XFS allocates block E for the fork only; the snapshot still points at C.">
+  <defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <text x="20" y="28" class="b">After reflink</text>
+  <text x="470" y="28" class="b">After the fork writes block 3</text>
+  <!-- left -->
+  <rect x="20" y="44" width="170" height="40" rx="6" class="box s-s"/><text x="32" y="69" class="sm mono">snapshot disk.ext4</text>
+  <rect x="20" y="208" width="170" height="40" rx="6" class="box h-s"/><text x="32" y="233" class="sm mono">jail rootfs.ext4</text>
+  <g>
+    <rect x="240" y="128" width="44" height="40" rx="4" class="tint-s s-s"/><text x="262" y="153" text-anchor="middle" class="b">A</text>
+    <rect x="292" y="128" width="44" height="40" rx="4" class="tint-s s-s"/><text x="314" y="153" text-anchor="middle" class="b">B</text>
+    <rect x="344" y="128" width="44" height="40" rx="4" class="tint-s s-s"/><text x="366" y="153" text-anchor="middle" class="b">C</text>
+    <rect x="396" y="128" width="44" height="40" rx="4" class="tint-s s-s"/><text x="418" y="153" text-anchor="middle" class="b">D</text>
+  </g>
+  <text x="410" y="190" class="xs mut" text-anchor="middle">disk blocks, refcount 2 each</text>
+  <path d="M190,64 C230,64 240,100 300,124" class="lnm" marker-end="url(#a5)"/>
+  <path d="M190,228 C230,228 240,196 300,172" class="lnm" marker-end="url(#a5)"/>
+  <!-- right -->
+  <rect x="470" y="44" width="170" height="40" rx="6" class="box s-s"/><text x="482" y="69" class="sm mono">snapshot disk.ext4</text>
+  <rect x="470" y="208" width="170" height="40" rx="6" class="box h-s"/><text x="482" y="233" class="sm mono">jail rootfs.ext4</text>
+  <g>
+    <rect x="690" y="128" width="44" height="40" rx="4" class="tint-s s-s"/><text x="712" y="153" text-anchor="middle" class="b">A</text>
+    <rect x="742" y="128" width="44" height="40" rx="4" class="tint-s s-s"/><text x="764" y="153" text-anchor="middle" class="b">B</text>
+    <rect x="794" y="100" width="44" height="40" rx="4" class="box s-s"/><text x="816" y="125" text-anchor="middle" class="b">C</text>
+    <rect x="846" y="128" width="44" height="40" rx="4" class="tint-s s-s"/><text x="868" y="153" text-anchor="middle" class="b">D</text>
+    <rect x="794" y="164" width="44" height="40" rx="4" class="tint-a acs" stroke-width="1.8"/><text x="816" y="189" text-anchor="middle" class="b">E</text>
+  </g>
+  <path d="M640,64 C700,64 760,80 794,112" class="lnm" marker-end="url(#a5)"/>
+  <path d="M640,228 C700,228 760,214 794,192" class="ln acs" marker-end="url(#a5)"/>
+  <text x="680" y="276" class="sm">C now refcount 1 (snapshot only)</text>
+  <text x="680" y="296" class="sm">E is new, owned by the fork</text>
+  <text x="680" y="316" class="xs mut">A, B, D stay shared</text>
+  <text x="20" y="290" class="sm">Cost of the copy: one metadata update.</text>
+  <text x="20" y="310" class="sm">Cost of each later write: one new block.</text>
+</svg>
+</div>
+<figcaption><b>Reflink shares blocks until someone writes.</b> The write lands in a freshly allocated block that only the writer's extent map points at. The snapshot's copy is never touched, which is why a snapshot's disk stays valid while dozens of forks scribble on theirs.</figcaption>
+</figure>
+<p>dune reflinks in four places: image import (<code>cp --reflink=auto</code>, which degrades to a sparse copy when the source isn't on the store), VM create (image rootfs → jail disk), pin (jail disk → <code>snapshots/&lt;id&gt;/disk.ext4</code>), and fork (snapshot disk → new jail disk). <code>storage.Reflink</code> refuses to fall back to a byte copy: a silent 2 GiB copy per fork would hide a misconfigured store.</p>
+
+<h3>2 · Memory: MAP_PRIVATE and the page cache</h3>
+<p>When Firecracker restores a snapshot with the <code>File</code> memory backend, it does not read the 1 GiB <code>mem</code> file into RAM. It <code>mmap</code>s it with <code>MAP_PRIVATE</code>, and that mapping becomes the guest's RAM (the memslot from chapter 3). Then the Linux memory manager does the rest:</p>
+<ul>
+  <li><strong>First read of a page</strong>: page fault. The kernel finds the file's page in the <em>page cache</em> (reading it from disk once if needed) and maps it into the process <em>read-only</em>, even though the mapping is writable.</li>
+  <li><strong>Second VM reading the same page</strong>: it's already in the page cache. Both processes now map the same physical page. One copy in RAM, two VMs.</li>
+  <li><strong>First write to a page</strong>: write fault on the read-only mapping. Because the mapping is private, the kernel allocates a fresh anonymous page, copies the 4 KiB, and maps the copy writable into <em>this process only</em>. The file and the other VMs never see the write.</li>
+</ul>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 330" role="img" aria-label="Three forks map the same snapshot memory file. Pages they only read are shared from the host page cache; each fork has a few private copies of pages it wrote.">
+  <defs><marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <text x="20" y="28" class="b">Host page cache: snapshots/b9a6/mem (root, 0444)</text>
+  <g>
+    <rect x="20" y="40" width="860" height="56" rx="8" class="tint-s s-s"/>
+    <g class="pg">
+      <rect x="36" y="54" width="54" height="28" rx="3" class="box"/><rect x="98" y="54" width="54" height="28" rx="3" class="box"/>
+      <rect x="160" y="54" width="54" height="28" rx="3" class="box"/><rect x="222" y="54" width="54" height="28" rx="3" class="box"/>
+      <rect x="284" y="54" width="54" height="28" rx="3" class="box"/><rect x="346" y="54" width="54" height="28" rx="3" class="box"/>
+      <rect x="408" y="54" width="54" height="28" rx="3" class="box"/><rect x="470" y="54" width="54" height="28" rx="3" class="box"/>
+      <rect x="532" y="54" width="54" height="28" rx="3" class="box"/><rect x="594" y="54" width="54" height="28" rx="3" class="box"/>
+      <rect x="656" y="54" width="54" height="28" rx="3" class="box"/><rect x="718" y="54" width="54" height="28" rx="3" class="box"/>
+      <rect x="780" y="54" width="84" height="28" rx="3" class="boxi"/><text x="822" y="73" class="xs mut" text-anchor="middle">… 262144</text>
+    </g>
+    <text x="63" y="73" class="xs mut" text-anchor="middle">0</text><text x="125" y="73" class="xs mut" text-anchor="middle">1</text><text x="187" y="73" class="xs mut" text-anchor="middle">2</text><text x="249" y="73" class="xs mut" text-anchor="middle">3</text>
+  </g>
+  <g>
+    <rect x="20" y="170" width="270" height="140" rx="8" class="tint-h h-s"/>
+    <text x="34" y="192" class="b">fork 1a2b</text><text x="120" y="192" class="xs mut">guest RAM mapping</text>
+    <text x="34" y="218" class="sm">pages 0, 2, 3 …: shared</text>
+    <rect x="34" y="232" width="54" height="28" rx="3" class="tint-a acs"/><text x="61" y="251" class="xs" text-anchor="middle">1′</text>
+    <text x="98" y="251" class="xs">private copy of page 1</text>
+    <text x="34" y="290" class="xs mut">RSS ≈ touched pages; Pss splits shared ones</text>
+  </g>
+  <g>
+    <rect x="315" y="170" width="270" height="140" rx="8" class="tint-h h-s"/>
+    <text x="329" y="192" class="b">fork 3c4d</text>
+    <text x="329" y="218" class="sm">pages 0, 1, 2 …: shared</text>
+    <rect x="329" y="232" width="54" height="28" rx="3" class="tint-a acs"/><text x="356" y="251" class="xs" text-anchor="middle">3′</text>
+    <text x="393" y="251" class="xs">private copy of page 3</text>
+  </g>
+  <g>
+    <rect x="610" y="170" width="270" height="140" rx="8" class="tint-h h-s"/>
+    <text x="624" y="192" class="b">fork 5e6f</text>
+    <text x="624" y="218" class="sm">pages 0, 2 …: shared</text>
+    <rect x="624" y="232" width="54" height="28" rx="3" class="tint-a acs"/><text x="651" y="251" class="xs" text-anchor="middle">1′</text>
+    <rect x="684" y="232" width="54" height="28" rx="3" class="tint-a acs"/><text x="711" y="251" class="xs" text-anchor="middle">3′</text>
+    <text x="748" y="251" class="xs">its own copies</text>
+  </g>
+  <path d="M120,168 L80,100" class="lnm" marker-end="url(#a6)"/>
+  <path d="M440,168 L260,100" class="lnm" marker-end="url(#a6)"/>
+  <path d="M740,168 L200,100" class="lnm" marker-end="url(#a6)"/>
+  <text x="880" y="132" class="xs mut" text-anchor="end">mmap(MAP_PRIVATE):</text>
+  <text x="880" y="148" class="xs mut" text-anchor="end">read faults map the cached page</text>
+</svg>
+</div>
+<figcaption><b>Clean pages exist once in RAM no matter how many forks map them.</b> A write fault gives the writer a private copy (marked ′). In the spike, two forks of a 1 GiB VM used about 55 MB of RSS each.</figcaption>
+</figure>
+<p>This is why the backend <em>hard-links</em> <code>mem</code> into each jail instead of reflinking it: the page cache is per inode. Two reflinked copies are two inodes and would be cached twice; one inode with several names is cached once. And because the file is never written, there's nothing for a hard link to get wrong. The comment in <code>Restore</code> says exactly this.</p>
+<p>How a guest touches memory: when the guest reads guest-physical address X for the first time, the nested page table has no entry, so the CPU exits to KVM. KVM looks up X in the memslot, finds the host-virtual address in Firecracker's mapping, and faults that address in like any other process memory, which triggers the page-cache logic above. After that the hardware handles accesses to that page with no host involvement.</p>
+<p>A side effect you will see in dune's memory meter: cgroup v2 charges a page-cache page to the cgroup that first faulted it in. The first fork to touch a shared page "pays" for it; siblings get it free. When that VM's scope is removed, the charge moves up to <code>dune.slice</code>. That is why <code>hoststats</code> sums the live VMs' scopes instead of reading the slice total.</p>
+
+<h3>3 · Snapshots: dirty-page tracking</h3>
+<p>The third kind is about snapshots rather than running VMs: a diff snapshot stores only the pages the guest changed since the previous snapshot. That needs its own chapter.</p>
+
+<div class="lab">
+<div class="lab-head">On midas, after forking a snapshot a few times</div>
+<pre><code>S=/srv/dune/store/snapshots/&lt;snap&gt;
+sudo stat -c '%h links  inode %i  %n' $S/mem      # link count = 1 + forks using it
+sudo filefrag -v $S/disk.ext4 | head -15          # look for "shared" in the flags column
+for p in $(pgrep firecracker); do sudo grep -E '^(Rss|Pss):' /proc/$p/smaps_rollup | tr '\n' ' '; echo; done
+# Rss counts shared pages fully; Pss divides each shared page among its users</code></pre>
+</div>
+</section>
+
+<!-- ============================================================ 6 -->
+<section class="chapter" id="snapshots">
+<div class="ch-num">Chapter 8</div>
+<h2>Snapshots: what <code>dune pin</code> does</h2>
+<h3>What is in a snapshot</h3>
+<div class="tbl"><table>
+<tr><th>File</th><th>Contents</th><th>Written by</th></tr>
+<tr><td><code>vmstate</code></td><td>vCPU registers, KVM state (interrupt controller, timers, kvmclock), virtio device state (queue positions), device configuration (including the <code>/rootfs.ext4</code> path)</td><td>Firecracker</td></tr>
+<tr><td><code>mem</code></td><td>Guest RAM: all of it (full) or only changed pages (diff)</td><td>Firecracker</td></tr>
+<tr><td><code>disk.ext4</code></td><td>The VM's disk at that instant</td><td>dune (reflink); Firecracker doesn't snapshot disks</td></tr>
+<tr><td><code>mem.full</code></td><td>Cache: a diff merged onto its ancestors (diffs only)</td><td>dune, via snapshot-editor</td></tr>
+</table></div>
+<p>RAM contains the guest kernel's page cache, including file writes the guest hasn't flushed to its disk yet. That is fine because memory and disk are captured together while the VM is paused: on restore the guest's cache and its disk agree exactly. A disk copy alone would be like pulling the power cord, but paired with its memory it is perfectly consistent.</p>
+
+<h3>The pin sequence</h3>
+<p>From <code>Manager.Pin</code> and <code>Backend.Snapshot</code>:</p>
+<ol class="steps">
+  <li><div>Pick the kind: <strong>diff</strong> if the VM has a <em>head</em> (its most recent snapshot), otherwise <strong>full</strong>. Insert a DB row.</div></li>
+  <li><div><code>PATCH /vm {"state":"Paused"}</code>. The vCPU threads leave <code>KVM_RUN</code>; the guest is frozen mid-instruction.</div></li>
+  <li><div><code>PUT /snapshot/create {"snapshot_type":"Full"|"Diff", "snapshot_path":"/snap.vmstate", "mem_file_path":"/snap.mem"}</code>. Firecracker can only write inside its jail, so it writes there.</div></li>
+  <li><div>Reflink <code>jail/…/root/rootfs.ext4</code> to <code>snapshots/&lt;id&gt;/disk.ext4</code>. The guest is paused, so the disk is quiescent.</div></li>
+  <li><div><code>rename()</code> the two new files from the jail into <code>snapshots/&lt;id&gt;/</code>. Same filesystem, so this is instant.</div></li>
+  <li><div><code>chown root:root</code> and <code>chmod 0444</code> all three: they are about to be shared with other VMs.</div></li>
+  <li><div>Resume (if it was running) and set the VM's head to the new snapshot.</div></li>
+</ol>
+<p>Measured on midas for a 1 GiB VM: a full pin pauses the VM for about 400 ms (writing 1 GiB), a diff pin about 50 ms.</p>
+
+<h3>How a diff knows what changed</h3>
+<p>Every VM is created with <code>track_dirty_pages: true</code>. Firecracker then registers guest memory with KVM's <strong>dirty logging</strong> flag. KVM write-protects every guest page in the nested page tables; the first write to each page causes a quick exit in which KVM sets that page's bit in a bitmap and makes the page writable again. Firecracker adds its own bitmap for pages that its device emulation wrote (for example, network packets copied into guest RAM).</p>
+<p>A diff snapshot fetches the bitmap (<code>KVM_GET_DIRTY_LOG</code>, which also resets it) and writes only the marked pages, each at its own offset in <code>mem</code>. Clean pages are left as holes, so the file is sparse: 1 GiB apparent size, but only the changed pages allocated. In the spike, a diff with 200 MB changed took 208 MB on disk.</p>
+<p class="key">The bitmap is reset at every snapshot attempt. If a pin fails halfway, the bitmap may already be cleared, and a later diff on the old head would silently miss pages. So <code>Pin</code> clears the VM's head on failure, forcing the next pin to be full.</p>
+
+<h3>Chains, and restoring a diff</h3>
+<p>Diffs form chains: <code>full ← diff ← diff</code>. A diff is useless alone, so before restoring one dune needs a complete memory image. <code>Backend.fullMemory</code> builds it recursively and caches it:</p>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 300" role="img" aria-label="To restore diff 2, dune reflinks the full snapshot's memory, applies diff 1's pages with snapshot-editor to get diff 1's mem.full, then reflinks that and applies diff 2's pages to get diff 2's mem.full.">
+  <defs><marker id="a7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <!-- chain row -->
+  <text x="20" y="28" class="b">Snapshot chain (parent ← child)</text>
+  <rect x="20" y="44" width="200" height="64" rx="8" class="tint-s s-s"/><text x="34" y="68" class="b">da11 · full</text><text x="34" y="90" class="xs">mem: every page</text>
+  <rect x="300" y="44" width="200" height="64" rx="8" class="box s-s"/><text x="314" y="68" class="b">af30 · diff</text><text x="314" y="90" class="xs">mem: dirty pages only, sparse</text>
+  <rect x="580" y="44" width="200" height="64" rx="8" class="box s-s"/><text x="594" y="68" class="b">800a · diff</text><text x="594" y="90" class="xs">mem: dirty pages only, sparse</text>
+  <line x1="296" y1="76" x2="224" y2="76" class="ln" marker-end="url(#a7)"/><text x="260" y="68" class="xs mut" text-anchor="middle">parent</text>
+  <line x1="576" y1="76" x2="504" y2="76" class="ln" marker-end="url(#a7)"/><text x="540" y="68" class="xs mut" text-anchor="middle">parent</text>
+  <!-- rebuild row -->
+  <text x="20" y="160" class="b">fork 800a: build its full memory</text>
+  <rect x="20" y="176" width="200" height="56" rx="8" class="tint-s s-s"/><text x="34" y="200" class="sm mono">da11/mem</text><text x="34" y="220" class="xs mut">used as is</text>
+  <rect x="300" y="176" width="200" height="56" rx="8" class="tint-a acs"/><text x="314" y="200" class="sm mono">af30/mem.full</text><text x="314" y="220" class="xs">reflink + af30 pages</text>
+  <rect x="580" y="176" width="200" height="56" rx="8" class="tint-a acs"/><text x="594" y="200" class="sm mono">800a/mem.full</text><text x="594" y="220" class="xs">reflink + 800a pages</text>
+  <line x1="220" y1="204" x2="296" y2="204" class="ln" marker-end="url(#a7)"/>
+  <line x1="500" y1="204" x2="576" y2="204" class="ln" marker-end="url(#a7)"/>
+  <line x1="400" y1="108" x2="400" y2="172" class="ln dash" marker-end="url(#a7)"/>
+  <line x1="680" y1="108" x2="680" y2="172" class="ln dash" marker-end="url(#a7)"/>
+  <text x="408" y="146" class="xs mut">dirty pages</text>
+  <text x="688" y="146" class="xs mut">dirty pages</text>
+  <line x1="780" y1="204" x2="846" y2="204" class="ln" marker-end="url(#a7)"/>
+  <text x="852" y="200" class="sm b">/mem</text><text x="852" y="216" class="xs mut">in jail</text>
+  <text x="20" y="276" class="sm">Each step: reflink the parent's full memory (instant), then snapshot-editor edit-memory rebase writes the diff's pages over it. Cost ≈ size of the diff.</text>
+</svg>
+</div>
+<figcaption><b>Diffs are cheap to take and cheap to restore</b> because the merge starts from a reflinked copy: only the diff's own pages are written. Results are cached as <code>mem.full</code> (0444), so the second fork of the same diff reuses them. In the spike, a merge took 45 ms.</figcaption>
+</figure>
+
+<h3>The rules for deleting snapshots</h3>
+<p><code>store.DeleteSnapshot</code> refuses while a snapshot has children (a diff's memory is meaningless without its parent) or while it is some VM's head (that VM's next diff will build on it). Running VMs are never affected by deletes: their jails hold their own hard links and reflinks, which keep the data alive until the VM is deleted too. Snapshots are tied to the Firecracker version and the host CPU model; they don't move between machines.</p>
+</section>
+
+<!-- ============================================================ 7 -->
+<section class="chapter" id="forks">
+<div class="ch-num">Chapter 9</div>
+<h2>Forks: what <code>dune fork SNAP -n 3</code> does</h2>
+<p>From <code>Manager.Fork</code> and <code>Backend.Restore</code>, for each of the N forks:</p>
+<ol class="steps">
+  <li><div>Resolve the chain (<code>store.Chain</code>) and get a full memory file (<code>fullMemory</code>, chapter 8). Done once for all forks.</div></li>
+  <li><div>Insert a VM row. The DB allocates a free network slot N, which fixes the uid (<code>100000+N</code>) and the host-side addresses. <code>origin</code> and <code>head</code> are both set to the snapshot.</div></li>
+  <li><div>Build the network namespace <code>dune-&lt;id&gt;</code> (chapter 10).</div></li>
+  <li><div>Create the jail directory, owned by the new uid.</div></li>
+  <li><div>Reflink <code>snapshots/&lt;s&gt;/disk.ext4</code> into the jail as <code>rootfs.ext4</code>; chown it to the uid, mode 0600. (The source is root-owned 0444, so the copy's owner and mode must be set explicitly; an early bug was exactly this.)</div></li>
+  <li><div>Hard-link <code>vmstate</code> and <code>mem</code> (or <code>mem.full</code>) into the jail.</div></li>
+  <li><div>Launch the jailer as in chapter 5, wait for <code>/run/api.sock</code>.</div></li>
+  <li><div><code>PUT /snapshot/load {snapshot_path: "/vmstate", mem_backend: {File, "/mem"}, track_dirty_pages: true, resume_vm: true, clock_realtime: true}</code>. Firecracker maps the memory, restores device and vCPU state, and resumes. The guest continues from the exact instruction where its parent was paused.</div></li>
+  <li><div>Fixup through the guest agent (below).</div></li>
+</ol>
+<p>Three forks of a 1 GiB VM take about 210 ms in total on midas. Almost all of that is process startup and the API calls; no data is copied.</p>
+
+<h3>What every fork shares, on purpose</h3>
+<p>Inside its memory each fork believes it is the original VM. That includes its IP address, its MAC address, its gateway's MAC in the ARP cache, its open file descriptors, its disk path and its vsock CID. dune doesn't try to change these. Instead it makes sure each fork's surroundings look identical: the same path in the chroot, the same addresses in its own network namespace. Chapter 10 shows how.</p>
+<p>Some state can't be faked from outside, and is fixed from inside the guest by <code>Manager.fixup</code>, which calls the agent's <code>/fixup</code> endpoint:</p>
+<div class="tbl"><table>
+<tr><th>Problem</th><th>Why it matters</th><th>Fix</th></tr>
+<tr><td>Clock</td><td>The guest clock stopped at the snapshot. Restoring hours later leaves it in the past: TLS certificates look invalid, logs lie.</td><td><code>clock_realtime</code> asks Firecracker to advance the guest's kvmclock; the agent then calls <code>clock_settime</code> with the host's time.</td></tr>
+<tr><td>Randomness</td><td>Every fork resumes with an identical kernel RNG state, so all forks would produce the <em>same</em> random numbers: same UUIDs, same TLS keys, same SSH session keys.</td><td>64 fresh bytes from the host, credited with <code>RNDADDENTROPY</code>, then <code>RNDRESEEDCRNG</code> forces the CRNG to rekey immediately. The VM tests check that forks generate distinct UUIDs.</td></tr>
+<tr><td>Hostname</td><td>All forks would call themselves <code>dune-&lt;parent&gt;</code>.</td><td><code>sethostname("dune-&lt;fork id&gt;")</code> and rewrite <code>/etc/hostname</code>.</td></tr>
+</table></div>
+<p>Things the fixup does <em>not</em> change: <code>/etc/machine-id</code>, SSH host keys, and any TCP connection that was open in the parent (the peer will reset it, since the fork has a different NAT address on the outside). If a workload cares about those, it needs its own post-fork hook.</p>
+<p>A fork's head starts at its origin snapshot because KVM's dirty bitmap starts empty at restore: the first diff a fork takes contains exactly what changed since that snapshot.</p>
+</section>
+
+<!-- ============================================================ 8 -->
+<section class="chapter" id="network">
+<div class="ch-num">Chapter 10</div>
+<h2>Networking with Linux primitives</h2>
+<h3>The problem</h3>
+<p>Every fork wakes up believing it is <code>172.16.0.2</code>, with gateway <code>172.16.0.1</code> at MAC <code>06:00:ac:10:00:01</code>. Those facts live in guest memory and can't be changed from outside. Ten forks with the same IP on one network would be chaos. The solution: give each VM a private copy of the whole network, identical inside, and translate addresses on the way out.</p>
+
+<h3>The building blocks</h3>
+<dl class="gloss">
+  <dt>network namespace</dt><dd>A separate copy of the kernel's network stack: its own interfaces, addresses, routes, iptables rules and sysctls. Two namespaces can both have <code>172.16.0.1</code> without conflict. <code>ip netns add dune-&lt;id&gt;</code> creates one and pins it at <code>/run/netns/dune-&lt;id&gt;</code>.</dd>
+  <dt>tap device</dt><dd>A virtual Ethernet interface whose "wire" is a file descriptor. Firecracker opens <code>/dev/net/tun</code>, attaches to <code>tap0</code>, and reads and writes whole Ethernet frames: frames the guest sends on its virtio-net <code>eth0</code> come out of <code>tap0</code> in the namespace, and vice versa.</dd>
+  <dt>veth pair</dt><dd>Two virtual interfaces joined by a virtual cable. Put one end in a namespace and the other in the host, and packets cross between them.</dd>
+  <dt>NAT (MASQUERADE)</dt><dd>An iptables rule that rewrites a packet's source address to the outgoing interface's address. <strong>conntrack</strong> remembers each translation so replies are rewritten back.</dd>
+  <dt>ip_forward</dt><dd>The sysctl that lets a namespace route packets between its interfaces instead of only accepting packets addressed to itself.</dd>
+</dl>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 470" role="img" aria-label="Guest eth0 172.16.0.2 connects through Firecracker to tap0 172.16.0.1 in the VM's namespace. The namespace NATs to veth0 10.200.0.6, which pairs with host interface dune-id 10.200.0.5. The host NATs again to its uplink. A second VM has an identical inside layout and a different slot outside.">
+  <defs><marker id="a8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <!-- VM 1 -->
+  <rect x="20" y="20" width="560" height="190" rx="10" class="box h-s dash"/>
+  <text x="34" y="40" class="sm b">netns dune-9e70 (slot 1)</text>
+  <rect x="34" y="56" width="140" height="138" rx="8" class="tint-g g-s"/>
+  <text x="46" y="78" class="b">guest</text>
+  <text x="46" y="100" class="mono">eth0</text>
+  <text x="46" y="116" class="mono">172.16.0.2</text>
+  <text x="46" y="132" class="xs mut">06:00:ac:10:00:02</text>
+  <text x="46" y="156" class="xs mut">gw 172.16.0.1</text>
+  <text x="46" y="172" class="xs mut">(from ip= boot arg)</text>
+  <rect x="226" y="80" width="130" height="64" rx="8" class="tint-h h-s"/>
+  <text x="238" y="102" class="mono">tap0</text><text x="238" y="118" class="mono">172.16.0.1/30</text><text x="238" y="134" class="xs mut">fixed MAC …:01</text>
+  <rect x="426" y="80" width="140" height="64" rx="8" class="tint-h h-s"/>
+  <text x="438" y="102" class="mono">veth0</text><text x="438" y="118" class="mono">10.200.0.6/30</text><text x="438" y="134" class="xs mut">default via .5</text>
+  <line x1="174" y1="112" x2="222" y2="112" class="ln" marker-end="url(#a8)"/>
+  <text x="198" y="104" class="xs mut" text-anchor="middle">virtio</text>
+  <line x1="356" y1="112" x2="422" y2="112" class="ln" marker-end="url(#a8)"/>
+  <text x="389" y="104" class="xs mut" text-anchor="middle">route</text>
+  <rect x="356" y="160" width="210" height="40" rx="6" class="tint-k k-s"/>
+  <text x="366" y="178" class="xs b">NAT #1: MASQUERADE -o veth0</text>
+  <text x="366" y="193" class="xs">src 172.16.0.2 → 10.200.0.6</text>
+  <!-- VM 2 -->
+  <rect x="20" y="230" width="560" height="110" rx="10" class="box h-s dash"/>
+  <text x="34" y="250" class="sm b">netns dune-1a2b (slot 2, a fork)</text>
+  <rect x="34" y="262" width="140" height="64" rx="8" class="tint-g g-s"/><text x="46" y="284" class="b">guest</text><text x="46" y="304" class="mono">172.16.0.2</text><text x="46" y="318" class="xs mut">identical</text>
+  <rect x="226" y="262" width="130" height="64" rx="8" class="tint-h h-s"/><text x="238" y="284" class="mono">tap0</text><text x="238" y="300" class="mono">172.16.0.1/30</text><text x="238" y="316" class="xs mut">identical</text>
+  <rect x="426" y="262" width="140" height="64" rx="8" class="tint-h h-s"/><text x="438" y="284" class="mono">veth0</text><text x="438" y="300" class="mono">10.200.0.10/30</text><text x="438" y="316" class="xs mut">differs per slot</text>
+  <line x1="174" y1="294" x2="222" y2="294" class="ln" marker-end="url(#a8)"/>
+  <line x1="356" y1="294" x2="422" y2="294" class="ln" marker-end="url(#a8)"/>
+  <!-- host -->
+  <rect x="620" y="20" width="260" height="430" rx="10" class="box"/>
+  <text x="636" y="42" class="b">host namespace</text>
+  <rect x="636" y="80" width="230" height="64" rx="8" class="tint-h h-s"/>
+  <text x="648" y="102" class="mono">dune-9e70</text><text x="648" y="118" class="mono">10.200.0.5/30</text>
+  <rect x="636" y="262" width="230" height="64" rx="8" class="tint-h h-s"/>
+  <text x="648" y="284" class="mono">dune-1a2b</text><text x="648" y="300" class="mono">10.200.0.9/30</text>
+  <line x1="566" y1="112" x2="632" y2="112" class="ln" stroke-width="2.2" marker-end="url(#a8)"/>
+  <text x="599" y="104" class="xs mut" text-anchor="middle">veth</text>
+  <line x1="566" y1="294" x2="632" y2="294" class="ln" stroke-width="2.2" marker-end="url(#a8)"/>
+  <rect x="636" y="158" width="230" height="92" rx="6" class="tint-k k-s"/>
+  <text x="648" y="176" class="xs b">FORWARD → DUNE-FORWARD</text>
+  <text x="648" y="192" class="xs">dune+ → dune+ : DROP</text>
+  <text x="648" y="207" class="xs">in dune+ : ACCEPT</text>
+  <text x="648" y="222" class="xs">out dune+, ESTABLISHED : ACCEPT</text>
+  <text x="648" y="240" class="xs mut">ip_forward = 1</text>
+  <rect x="636" y="342" width="230" height="44" rx="6" class="tint-k k-s"/>
+  <text x="648" y="360" class="xs b">NAT #2: DUNE-POSTROUTING</text>
+  <text x="648" y="376" class="xs">-s 10.200.0.0/16 ! -o dune+ MASQ</text>
+  <rect x="636" y="398" width="230" height="40" rx="6" class="box"/>
+  <text x="648" y="423" class="mono">uplink → internet</text>
+  <line x1="751" y1="326" x2="751" y2="338" class="ln" marker-end="url(#a8)"/>
+  <line x1="751" y1="386" x2="751" y2="394" class="ln" marker-end="url(#a8)"/>
+  <text x="34" y="380" class="sm">Slot N owns 10.200.0.0/16 at offset 4·N, a /30:</text>
+  <text x="34" y="400" class="sm mono">host side .4N+1, namespace side .4N+2</text>
+  <text x="34" y="430" class="sm">Everything left of veth0 is the same in every VM.</text>
+</svg>
+</div>
+<figcaption><b>Identical inside, unique outside, NAT at the border.</b> The guest's address is translated twice: to the namespace's veth address, then to the host's uplink address. The per-slot /30 is the only thing that differs between VMs.</figcaption>
+</figure>
+
+<h3>A packet's round trip</h3>
+<p>The guest in slot 1 runs <code>curl 1.1.1.1</code>:</p>
+<ol class="steps">
+  <li><div>The guest kernel routes via its default gateway 172.16.0.1, resolves its MAC from the ARP cache, and hands the frame to virtio-net. Firecracker's VMM thread pulls it from the virtio queue and <code>write()</code>s it to the tap file descriptor. It appears on <code>tap0</code>: <code>172.16.0.2 → 1.1.1.1</code>.</div></li>
+  <li><div>In the namespace, the kernel routes it to <code>veth0</code> (default route via 10.200.0.5). On the way out, NAT #1 rewrites the source: <code>10.200.0.6 → 1.1.1.1</code>. conntrack records the mapping.</div></li>
+  <li><div>The packet crosses the veth into the host as arriving on <code>dune-9e70</code>. The host forwards it: <code>DUNE-FORWARD</code> accepts traffic coming in from <code>dune+</code> interfaces, but drops traffic between two of them, so VMs can't reach each other.</div></li>
+  <li><div>Leaving the uplink, NAT #2 rewrites the source again, to the host's own address. The internet sees midas.</div></li>
+  <li><div>The reply comes back to midas. Host conntrack undoes NAT #2 (destination becomes 10.200.0.6), the ESTABLISHED rule lets it through to <code>dune-9e70</code>, namespace conntrack undoes NAT #1 (destination 172.16.0.2), and Firecracker reads the frame from tap0 into the guest's virtio queue.</div></li>
+</ol>
+
+<h3>Details that matter</h3>
+<ul>
+  <li><strong>The fixed tap MAC.</strong> The guest's ARP cache, in its memory, maps 172.16.0.1 to whatever MAC tap0 had when the parent was snapshotted. Linux gives new tap devices random MACs, so a fork's gateway would have a different MAC and the guest would send frames to a MAC that doesn't exist until its ARP entry expires. Pinning tap0 to <code>06:00:ac:10:00:01</code> in every namespace makes forks online instantly. This was found in the spike.</li>
+  <li><strong>tap0 is owned by the VM's uid</strong> (<code>ip tuntap add … user 1000NN</code>), because Firecracker opens it after dropping root.</li>
+  <li><strong>Why dune's own chains.</strong> Docker on midas sets the FORWARD policy to DROP. dune inserts a jump to <code>DUNE-FORWARD</code> at the top of FORWARD, and keeps all its rules in its own chains so it can flush and rebuild them at every start without touching anyone else's.</li>
+  <li><strong>The host veth is named after the VM</strong> (<code>dune-&lt;id&gt;</code>), not the slot. Naming by slot once let cleanup of one VM delete another VM's interface after the slot was reused.</li>
+  <li><strong>No inbound connections.</strong> There is no port forwarding; the guest is behind two NATs. The host can reach the namespace's 10.200.x address, but not 172.16.0.2. dune reaches into guests through vsock instead (chapter 11).</li>
+  <li><strong>DNS</strong> has no kernel boot argument, so <code>image.Prepare</code> writes <code>/etc/resolv.conf</code> (1.1.1.1, 8.8.8.8) into the rootfs at import, replacing systemd-resolved's symlink.</li>
+  <li><strong>Teardown.</strong> <code>ip netns delete</code> only unlinks the name; the kernel destroys the namespace asynchronously, once nothing references it. <code>netns.Delete</code> therefore deletes the host veth explicitly first; deleting one end of a pair removes both, synchronously.</li>
+</ul>
+
+<div class="lab">
+<div class="lab-head">On midas</div>
+<pre><code>ip netns list                                         # dune-&lt;id&gt; per VM
+ip -br addr show | grep dune-                         # host ends of the veths
+sudo ip netns exec dune-&lt;id&gt; ip -br addr             # lo, veth0, tap0: the inside
+sudo ip netns exec dune-&lt;id&gt; ip -d link show tap0     # "tun type tap … user 1000NN"
+sudo ip netns exec dune-&lt;id&gt; iptables -t nat -S       # NAT #1
+sudo iptables -S DUNE-FORWARD; sudo iptables -t nat -S DUNE-POSTROUTING   # host rules
+dune exec &lt;id&gt; ip neigh                                  # guest's ARP cache: .1 at 06:00:ac:10:00:01
+sudo ip netns exec dune-&lt;id&gt; tcpdump -ni tap0 -c 10   # watch guest traffic (if tcpdump installed)</code></pre>
+</div>
+</section>
+
+<!-- ============================================================ 9 -->
+<section class="chapter" id="vsock">
+<div class="ch-num">Chapter 11</div>
+<h2>vsock and the guest agent</h2>
+<p>dune needs to run commands in guests and open terminals, without SSH and without network access to the guest. It uses <strong>vsock</strong>, a socket family (<code>AF_VSOCK</code>) designed for host-to-guest communication. Addresses are a context ID (CID) and a port instead of an IP and a port; the guest is CID 3.</p>
+<p>Firecracker implements the virtio-vsock device itself, in userspace (there is no <code>vhost_vsock</code> module loaded on midas). On the host side it appears as a unix socket, <code>/v.sock</code> in the jail. To connect to a guest port, the host connects to that socket and speaks a one-line handshake (<code>Backend.DialAgent</code>):</p>
+<pre><code>host → firecracker:  CONNECT 1024\n
+firecracker → host:  OK &lt;host port&gt;\n     then a raw byte stream to the guest</code></pre>
+
+<figure>
+<div class="plate">
+<svg viewBox="0 0 900 160" role="img" aria-label="duned connects to the jail's v.sock unix socket, Firecracker relays the bytes through the virtio-vsock device to the guest, where dune-agent listens on AF_VSOCK port 1024 and serves HTTP.">
+  <defs><marker id="a9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrowhead"/></marker></defs>
+  <rect x="20" y="40" width="150" height="70" rx="8" class="tint-h h-s"/><text x="36" y="68" class="b">duned</text><text x="36" y="90" class="xs mut">agent.Client (HTTP)</text>
+  <rect x="250" y="40" width="160" height="70" rx="8" class="box"/><text x="266" y="68" class="mono">jail/…/root/v.sock</text><text x="266" y="90" class="xs mut">unix socket</text>
+  <rect x="490" y="40" width="160" height="70" rx="8" class="tint-h h-s"/><text x="506" y="68" class="b">firecracker</text><text x="506" y="90" class="xs mut">virtio-vsock device</text>
+  <rect x="730" y="40" width="150" height="70" rx="8" class="tint-g g-s"/><text x="746" y="68" class="b">dune-agent</text><text x="746" y="90" class="xs mut">AF_VSOCK :1024</text>
+  <line x1="170" y1="75" x2="246" y2="75" class="ln" marker-end="url(#a9)"/><text x="208" y="66" class="xs mut" text-anchor="middle">CONNECT 1024</text>
+  <line x1="410" y1="75" x2="486" y2="75" class="ln" marker-end="url(#a9)"/>
+  <line x1="650" y1="75" x2="726" y2="75" class="ln" marker-end="url(#a9)"/><text x="688" y="66" class="xs mut" text-anchor="middle">virtqueue</text>
+  <text x="20" y="145" class="sm">Over the stream: HTTP/1.1. /health, /exec, /fixup, and an upgraded /pty connection with framed data, resize and exit messages.</text>
+</svg>
+</div>
+<figcaption><b>A private wire to each guest that needs no network.</b> It works even if the guest's network is broken, and only processes that can reach the jail's socket (root on the host) can use it.</figcaption>
+</figure>
+<p>The agent (<code>cmd/dune-agent</code>) is a static Go binary, so it runs on any guest libc. <code>image.Prepare</code> installs it at import, together with a systemd unit enabled by a symlink in <code>sysinit.target.wants</code> (what <code>systemctl enable</code> would do, done without running systemd). Go's <code>net</code> package doesn't know <code>AF_VSOCK</code>, so the agent creates the socket with raw syscalls and wraps each accepted fd in an <code>*os.File</code>, which Go's runtime poller handles like any socket.</p>
+<p>After a restore, Firecracker sends the guest a vsock <em>transport reset</em>: connections that were open at snapshot time are dropped. The agent's <em>listening</em> socket survives, because it's just state in guest memory. <code>fixup</code> retries for up to 3 seconds to cover the moment of the reset.</p>
+<p>The PTY endpoint opens <code>/dev/ptmx</code>, unlocks and names the slave (<code>TIOCSPTLCK</code>, <code>TIOCGPTN</code>), and starts a login shell with the slave as its controlling terminal in a new session. That gives job control and Ctrl-C the way a real terminal does.</p>
+</section>
+
+<!-- ============================================================ 10 -->
+<section class="chapter" id="lifecycle">
+<div class="ch-num">Chapter 12</div>
+<h2>Processes, systemd and the API</h2>
+<h3>Why VMs survive a daemon restart</h3>
+<p>systemd tracks a service by its <em>cgroup</em>: every process duned starts lands in <code>duned.service</code>'s cgroup, and stopping or restarting the service kills everything in it (<code>KillMode=control-group</code>, the default). VMs started as plain children would die with every <code>systemctl restart duned</code>.</p>
+<p>So duned launches each jailer through <code>systemd-run --scope --unit=dune-vm-&lt;id&gt;.scope --slice=dune.slice</code>. systemd creates a transient <strong>scope</strong> unit, moves the <code>systemd-run</code> process into its own cgroup, and <code>systemd-run</code> then <code>exec</code>s the jailer, which <code>exec</code>s Firecracker. One pid all the way down, so the pid duned records stays the VM's pid. The VM now belongs to the scope, not to duned. It also gets <code>setsid()</code> so a Ctrl-C in a terminal running duned can't signal it.</p>
+<p>After a restart, duned is no longer the VMs' parent. <code>Manager.Recover</code> checks each recorded pid by reading <code>/proc/&lt;pid&gt;/cmdline</code> for <code>--id &lt;vm&gt;</code> (Firecracker keeps the jailer's arguments), which guards against a recycled pid belonging to something else.</p>
+
+<h3>How a request reaches a VM</h3>
+<ol class="steps">
+  <li><div><code>dune fork …</code> on your Mac sends HTTP to <code>100.97.247.80:7070</code>. Tailscale carries it inside WireGuard, so it's encrypted and authenticated to your device.</div></li>
+  <li><div><code>WhoisAuth</code> asks <code>tailscale whois</code> which tailnet login owns the source IP, and rejects anyone not in <code>allow_users</code>. An empty list rejects everyone.</div></li>
+  <li><div><code>BrowserGuard</code> defends against attacks through your own browser: the Host header must be one of midas's names (stops DNS rebinding), and non-GET requests need the <code>X-Dune-Request</code> header, which a foreign website can't add without a CORS preflight duned never approves (stops CSRF). WebSocket upgrades check Origin.</div></li>
+  <li><div>The handler calls the Manager, which takes a per-VM or per-snapshot lock, updates SQLite, and calls the backend.</div></li>
+  <li><div>The backend speaks HTTP to Firecracker over <code>jail/…/root/run/api.sock</code>, and HTTP to the agent over <code>jail/…/root/v.sock</code>.</div></li>
+</ol>
+<p>On midas itself, the unix socket <code>/run/dune/duned.sock</code> (mode 0600, root only) skips the Tailscale checks: filesystem permissions are the authentication.</p>
+
+<div class="lab">
+<div class="lab-head">On midas</div>
+<pre><code>systemctl status duned
+systemd-cgls -u dune.slice                 # one scope per VM, firecracker inside
+systemctl list-units 'dune-vm-*'
+cat /sys/fs/cgroup/dune.slice/dune-vm-&lt;id&gt;.scope/memory.current
+journalctl -u duned -n 50                  # denied requests, errors</code></pre>
+</div>
+</section>
+
+<!-- ============================================================ 11 -->
+<section class="chapter" id="limits">
+<div class="ch-num">Chapter 13</div>
+<h2>What is not isolated yet</h2>
+<p>Being able to explain the isolation includes knowing where it stops. As of this writing:</p>
+<ul>
+  <li><strong>No resource limits.</strong> The scopes give accounting, not limits: no <code>MemoryMax</code>, no <code>CPUQuota</code>. A guest is bounded by its configured vCPUs and RAM, but Firecracker's own overhead and disk I/O aren't capped, and nothing stops the host from being overcommitted by many VMs.</li>
+  <li><strong>Guests have outbound internet.</strong> Anything a guest runs can reach the internet as midas (and anything on midas's LAN). Only VM-to-VM forwarding is dropped.</li>
+  <li><strong>No PID or user namespace.</strong> The jailer can create a PID namespace (<code>--new-pid-ns</code>); dune doesn't use it, so a compromised Firecracker can see host process lists. Its uid can't signal them, but it can read <code>/proc</code> details that a namespace would hide.</li>
+  <li><strong>Shared host kernel.</strong> KVM, netfilter, XFS and the page cache are shared by every VM. A host kernel bug reachable from a guest affects all of them; that's true of every KVM-based system.</li>
+  <li><strong>Forks share secrets.</strong> Anything in the parent's memory or disk at snapshot time (keys, tokens, machine-id) is in every fork.</li>
+  <li><strong>duned is root and holds everything.</strong> Its API is the real security boundary for the host: the Tailscale allow list, the Host/CSRF guard, and the 0600 unix socket.</li>
+</ul>
+</section>
+
+<!-- ============================================================ 12 -->
+<section class="chapter" id="glossary">
+<div class="ch-num">Chapter 14</div>
+<h2>Glossary</h2>
+<dl class="gloss">
+  <dt>KVM</dt><dd>Linux's hypervisor module. Turns the CPU's virtualization extensions into an ioctl API on <code>/dev/kvm</code>.</dd>
+  <dt>VMM</dt><dd>Virtual machine monitor: the userspace program that drives KVM and emulates devices. Firecracker here; QEMU elsewhere.</dd>
+  <dt>VM exit</dt><dd>The CPU leaving guest mode to let the host handle something (a device access, an interrupt).</dd>
+  <dt>NPT / EPT</dt><dd>Nested page tables (AMD / Intel): hardware translation from guest-physical to host-physical memory.</dd>
+  <dt>memslot</dt><dd>A KVM mapping from a range of guest-physical memory to a range of the VMM's virtual memory.</dd>
+  <dt>virtio-mmio</dt><dd>Paravirtual devices (the guest knows it is virtual) discovered at fixed memory addresses rather than over PCI.</dd>
+  <dt>jailer</dt><dd>Firecracker's launcher: builds the chroot, enters namespaces, drops privileges, execs Firecracker.</dd>
+  <dt>pivot_root</dt><dd>Swaps a mount namespace's root filesystem. Stronger than <code>chroot()</code>, which leaves the old root reachable.</dd>
+  <dt>seccomp</dt><dd>A per-thread kernel filter that kills or rejects syscalls not on an allowlist.</dd>
+  <dt>namespace</dt><dd>A per-process view of one kernel resource: mounts, network, pids, users, and more.</dd>
+  <dt>cgroup</dt><dd>A kernel group of processes for accounting and limits. systemd units are cgroups.</dd>
+  <dt>scope</dt><dd>A systemd unit for processes started elsewhere and handed to systemd, as opposed to a service, which systemd starts itself.</dd>
+  <dt>loop device</dt><dd>A block device backed by a file.</dd>
+  <dt>sparse file</dt><dd>A file with holes: ranges that occupy no disk space and read as zeros.</dd>
+  <dt>discard / fstrim</dt><dd>Telling the layer below which blocks are free. On a loop device that becomes punching holes in the file.</dd>
+  <dt>extent</dt><dd>A contiguous run of file data, mapped to a contiguous run of disk blocks.</dd>
+  <dt>reflink</dt><dd>A file copy that shares the source's extents, with copy-on-write. The <code>FICLONE</code> ioctl.</dd>
+  <dt>hard link</dt><dd>A second name for the same inode. No copy, no copy-on-write.</dd>
+  <dt>page cache</dt><dd>The kernel's in-RAM cache of file contents, shared by every process that maps or reads the file.</dd>
+  <dt>MAP_PRIVATE</dt><dd>An <code>mmap</code> flag: reads share the file's pages, writes go to private copies.</dd>
+  <dt>RSS / PSS</dt><dd>Resident set size counts every page a process maps; proportional set size divides each shared page among the processes sharing it.</dd>
+  <dt>dirty log</dt><dd>KVM's bitmap of guest pages written since it was last read. The basis of diff snapshots.</dd>
+  <dt>head</dt><dd>dune's name for a VM's latest snapshot, which its next diff snapshot builds on.</dd>
+  <dt>tap / veth</dt><dd>A virtual NIC wired to a file descriptor / a pair of virtual NICs wired to each other.</dd>
+  <dt>MASQUERADE</dt><dd>Source NAT to the outgoing interface's address, with conntrack reversing it for replies.</dd>
+  <dt>vsock</dt><dd>A socket family for host-to-guest streams, addressed by CID and port.</dd>
+  <dt>slot</dt><dd>dune's per-VM integer, unique among live VMs. Determines the uid and the host-side /30.</dd>
+</dl>
+</section>
+</main>
+</div>
+
+<script>
+(() => {
+  const links = [...document.querySelectorAll("nav.rail a")];
+  const byId = new Map(links.map((a) => [a.getAttribute("href").slice(1), a]));
+  if (!("IntersectionObserver" in window)) return;
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      links.forEach((a) => a.classList.remove("on"));
+      byId.get(e.target.id)?.classList.add("on");
+    }
+  }, { rootMargin: "-20% 0px -70% 0px" });
+  document.querySelectorAll("section.chapter").forEach((s) => io.observe(s));
+})();
+</script>
