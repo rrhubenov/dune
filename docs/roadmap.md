@@ -12,21 +12,18 @@ what "done" means, and open questions to settle before starting.
 Ports listening in VMs are noticed by duned and published on the tailnet
 (`internal/ports`); `dune ports`; links in the UI.
 
-## M1: UI foundation
+## M1: UI foundation (done)
 
 Goal: a UI that can grow into the whole control plane.
 
-- [ ] Front-end approach (see open questions); vendor it like xterm
-- [ ] Routing: VM list, VM detail page, global pages
-- [ ] VM detail page with tabs: Terminals, Agent, Ports, Files, Snapshots (empty
-      tabs are placeholders for later milestones)
-- [ ] Global pages: Secrets, Images, Host (placeholders where needed)
-- [ ] Move existing features over: lifecycle, pin/fork, lineage, ports, host meters
-- [ ] Headless checks (playwright) in light, dark and phone widths
-
-Done when: everything the current UI does works in the new structure.
-
-Open: build-free Preact + htm (leaning) or a framework with a build step?
+- [x] Preact 10.29.8 + htm 3.1.1, vendored, no build step (import map)
+- [x] Hash routing: VM list, VM detail page, global pages
+- [x] VM detail page with tabs: Terminal, Agent, Ports, Files, Snapshots (Agent and
+      Files are placeholders for M4/M5); the terminal stays alive across tabs
+- [x] Global pages: Snapshots, Images (with import), Secrets (placeholder), Host
+- [x] Existing features moved over: lifecycle, pin/fork, lineage, ports, host meters
+- [x] Headless checks (playwright) in light, dark and phone widths, and against
+      the real daemon
 
 ## M2: Persistent terminal sessions
 

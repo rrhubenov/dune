@@ -23,7 +23,7 @@ blocks (XFS reflink) and memory pages (snapshot file mapped `MAP_PRIVATE`).
 | `internal/store` | SQLite: images, vms, snapshots, net slots, `Chain` |
 | `internal/image` | rootfs prep at import: resolv.conf + agent + systemd unit |
 | `internal/api` | HTTP API, `WhoisAuth` (Tailscale), `BrowserGuard` (Host + CSRF), WebSockets |
-| `internal/web/static` | embedded UI (vanilla JS, vendored xterm) |
+| `internal/web/static` | embedded UI: Preact + htm ES modules, no build step (import map in `index.html`), vendored xterm; hash routes, `app/store.js` holds state |
 | `internal/hoststats` | meminfo + per-VM cgroup memory |
 | `internal/ports` | polls agents for listening ports, publishes them on `<tailnet ip>:20000-29999` |
 
